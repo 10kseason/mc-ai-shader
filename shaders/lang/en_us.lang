@@ -1,0 +1,1 @@
+profile.comment=low - Lower shadow distance/resolution, AO, bloom, local-light tracing, rain/water SSR, and reflected-geometry water pass cost. balanced - Current shader defaults. cinematic - Higher shadow range, AO, bloom GI, local-light tracing, water SSR/reflected geometry, fog/cloud/rain atmosphere, and reflective material response.
