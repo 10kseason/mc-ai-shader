@@ -4,6 +4,8 @@
 
 Minimal Iris/OptiFine-style GLSL shaderpack experiment for Minecraft Java.
 
+This is a vibe-coded shader: an iterative visual lab focused on quickly shaping mood, water, light, and atmosphere in-game.
+
 This project is intentionally separate from the server-side Fabric optimizer code.
 
 ## Preview
