@@ -1,8 +1,26 @@
 # Client GLSL Shaderpack Lab
 
+[한국어 README](README.ko.md)
+
 Minimal Iris/OptiFine-style GLSL shaderpack experiment for Minecraft Java.
 
+This is a vibe-coded shader: an iterative visual lab focused on quickly shaping mood, water, light, and atmosphere in-game.
+
 This project is intentionally separate from the server-side Fabric optimizer code.
+
+## Preview
+
+In-game Iris test captures from the current shaderpack build:
+
+![Day water and foliage preview](docs/images/preview-day-water.png)
+
+| Night water and moon haze | Torch and local lighting |
+| --- | --- |
+| ![Night water and moon haze preview](docs/images/preview-night-water.png) | ![Torch and local lighting preview](docs/images/preview-night-torch.png) |
+
+| Material and local light test |
+| --- |
+| ![Material and local light preview](docs/images/preview-material-lights.png) |
 
 ## What This First Version Does
 
