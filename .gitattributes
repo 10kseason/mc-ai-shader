@@ -1,0 +1,11 @@
+* text=auto
+
+*.fsh text eol=lf
+*.vsh text eol=lf
+*.properties text eol=lf
+*.lang text eol=lf
+*.mcmeta text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.bat text eol=crlf
+*.zip binary
