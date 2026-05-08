@@ -9,11 +9,6 @@ varying float gbVegetationMask;
 
 attribute vec4 at_tangent;
 
-#define LEAF_WIND_STRENGTH 0.035 // [0.000 0.018 0.035 0.055 0.080]
-#define LEAF_WIND_SPEED 0.85 // [0.30 0.55 0.85 1.15 1.55]
-
-uniform float frameTimeCounter;
-
 float getVertexVegetationMask(vec4 tint, vec3 normal) {
     float greenLead = smoothstep(0.05, 0.34, tint.g - max(tint.r, tint.b));
     float saturation = max(max(tint.r, tint.g), tint.b) - min(min(tint.r, tint.g), tint.b);
@@ -26,14 +21,6 @@ void main() {
     vec4 vertex = gl_Vertex;
     vec3 objectNormal = dot(gl_Normal, gl_Normal) > 0.0001 ? normalize(gl_Normal) : vec3(0.0, 1.0, 0.0);
     gbVegetationMask = getVertexVegetationMask(gl_Color, objectNormal);
-
-    float phase = dot(vertex.xyz, vec3(0.23, 0.07, 0.19)) * 6.2831853 + frameTimeCounter * LEAF_WIND_SPEED;
-    float broadWave = sin(phase);
-    float fineWave = sin(phase * 1.73 + vertex.y * 1.91);
-    float wind = (broadWave * 0.72 + fineWave * 0.28) * LEAF_WIND_STRENGTH * gbVegetationMask;
-    vec3 swayDir = normalize(vec3(0.82, 0.12, 0.34));
-    vertex.xyz += swayDir * wind;
-    vertex.y += fineWave * LEAF_WIND_STRENGTH * gbVegetationMask * 0.12;
 
     gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * vertex;
     gbColor = gl_Color;
