@@ -6,6 +6,20 @@ Minimal Iris/OptiFine-style GLSL shaderpack experiment for Minecraft Java.
 
 This project is intentionally separate from the server-side Fabric optimizer code.
 
+## Preview
+
+In-game Iris test captures from the current shaderpack build:
+
+![Day water and foliage preview](docs/images/preview-day-water.png)
+
+| Night water and moon haze | Torch and local lighting |
+| --- | --- |
+| ![Night water and moon haze preview](docs/images/preview-night-water.png) | ![Torch and local lighting preview](docs/images/preview-night-torch.png) |
+
+| Material and local light test |
+| --- |
+| ![Material and local light preview](docs/images/preview-material-lights.png) |
+
 ## What This First Version Does
 
 - Runs as a standard shaderpack folder or zip.
