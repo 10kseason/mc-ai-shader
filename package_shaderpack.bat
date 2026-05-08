@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "DIST=%ROOT%dist"
-set "OUT=%DIST%\Client-GLSL-Shaderpack-Lab-1.20.1.zip"
+set "OUT=%DIST%\Client-GLSL-Shaderpack-Lab-0.1.1-mc1.20.1.zip"
 
 if not exist "%DIST%" mkdir "%DIST%"
 if exist "%OUT%" del /f /q "%OUT%"

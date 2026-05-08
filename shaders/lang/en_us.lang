@@ -1,1 +1,8 @@
 profile.comment=low - Lower shadow distance/resolution, AO, bloom, local-light tracing, rain/water SSR, and reflected-geometry water pass cost. balanced - Current shader defaults. cinematic - Higher shadow range, AO, bloom GI, local-light tracing, water SSR/reflected geometry, fog/cloud/rain atmosphere, and reflective material response.
+option.DEBUG_VIEW=Debug View
+option.DEBUG_VIEW.comment=Diagnostic output for isolating moving-shadow artifacts. Keep Normal for gameplay.
+value.DEBUG_VIEW.0=Normal
+value.DEBUG_VIEW.1=Shadow Only
+value.DEBUG_VIEW.2=SSAO Only
+value.DEBUG_VIEW.3=RT Local Only
+value.DEBUG_VIEW.4=Water Mask

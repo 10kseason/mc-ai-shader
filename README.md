@@ -8,6 +8,10 @@ This is a vibe-coded shader: an iterative visual lab focused on quickly shaping 
 
 This project is intentionally separate from the server-side Fabric optimizer code.
 
+## Version
+
+Current release: `0.1.1` for Minecraft Java `1.20.1`.
+
 ## Preview
 
 In-game Iris test captures from the current shaderpack build:
@@ -22,7 +26,7 @@ In-game Iris test captures from the current shaderpack build:
 | --- |
 | ![Material and local light preview](docs/images/preview-material-lights.png) |
 
-## What This First Version Does
+## What This Version Does
 
 - Runs as a standard shaderpack folder or zip.
 - Uses resource pack format 15 for Minecraft Java 1.20.1.
@@ -46,7 +50,7 @@ In-game Iris test captures from the current shaderpack build:
 - Horizon blending has a dedicated water-sky mist pass to soften the flat gray render-boundary band where distant water, fog, and sky meet.
 - Vanilla cloud geometry now writes a cloud marker into the material buffer, allowing the composite pass to add density variation, inner shadow, and sun-behind-cloud scattering without changing world geometry.
 - Glass and high-reflectance metal surfaces use PBR smoothness/reflectance plus Fresnel to add a restrained cyberpunk cyan/magenta reflection split.
-- Leaf-tinted terrain gets a stronger natural green response plus a subtle vertex sway for wind-like movement.
+- Leaf-tinted terrain gets a stronger natural green response without vertex sway, keeping grass and foliage stable while standing still.
 - The main scene and bloom buffers now stay in a precise `0..1` LDR range with 16-bit normalized color targets instead of carrying overbright HDR values.
 - The final pass uses an LDR precision curve for shadow toe, highlight shoulder, low-black-floor detail, and local contrast preservation without 20-stop HDR compression.
 - Default final color grading now favors physically plausible exposure over stylized filters: pastel wash, BF3-style blue grading, heavy rain gray-blue tint, and over-bright middle-gray mapping are reduced or disabled by default.
@@ -62,6 +66,8 @@ In-game Iris test captures from the current shaderpack build:
 - RT source detection now uses a stricter warm-texture source mask so ordinary torch-lit walls are less likely to become fake emitters.
 - Adds a block-light field fallback in the material mask: non-water surfaces encode local block light below the water-mask threshold, then composite uses it for stable warm local light and shadow-edge darkening even when the torch itself is off screen.
 - Adds Iris shader profiles for `low`, `balanced`, and `cinematic`. `balanced` matches the current shader defaults, while the other two profiles lower or raise the same setting groups for direct in-game comparison.
+- Adds a `Debug View` shader setting for isolating shadow-only, SSAO-only, RT-local-only, and water-mask outputs.
+- Stabilizes block-edge shadows by softening shadow-map sampling, reducing screen-space RT local shadow strength, and removing vegetation vertex wind movement.
 - Current RT limitation: visible emissive sources use screen-space tracing, while the block-light fallback is a stable light-field approximation rather than a full voxel light list.
 - Current water reflection limitation: the new reflection texture is a half-resolution Iris pass for visible reflected geometry. It is still bounded by screen/depth-buffer visibility, not a full second mirrored world render, which keeps performance closer to this lab pack's current budget.
 - Keeps the shader simple enough to debug with Iris shader reload.
@@ -69,7 +75,7 @@ In-game Iris test captures from the current shaderpack build:
 ## Install
 
 1. Run `package_shaderpack.bat`.
-2. Copy `dist/Client-GLSL-Shaderpack-Lab-1.20.1.zip` into `.minecraft/shaderpacks/`.
+2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.1-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
 3. Enable it from Iris or OptiFine shader settings.
 
 During development, you can also copy this folder directly into `shaderpacks/` and reload shaders in-game.
@@ -78,9 +84,9 @@ During development, you can also copy this folder directly into `shaderpacks/` a
 
 Open Iris shader settings and use the profile button at the top of the main options screen.
 
-- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, leaf wind, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass and sets its final blend to `0.00`.
+- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass and sets its final blend to `0.00`.
 - `balanced`: preserves the values that were already in the shader sources before this profile pass. Use this as the baseline when checking whether `low` or `cinematic` changed a scene too much.
-- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO, longer RT local light tracing, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, more water motion, stronger material reflections, and stronger leaf movement.
+- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO, longer RT local light tracing, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, more water motion, and stronger material reflections.
 
 Suggested test loop:
 
@@ -88,6 +94,15 @@ Suggested test loop:
 2. Switch to `low`, reload shaders, and check for retained scene readability with lower reflection, AO, bloom, shadow, and local-light cost.
 3. Switch to `cinematic`, reload shaders, and check whether the larger shadow range, water reflection pass, bloom GI, and weather atmosphere are worth the heavier load.
 4. If you touch an individual slider after selecting a profile, Iris may show `Custom`; reselect the profile to return to the preset.
+
+## Changelog
+
+### 0.1.1
+
+- Removed vegetation vertex wind movement to stop grass/foliage from making nearby block shadows appear to move while the camera is still.
+- Reduced unstable RT-local shadow contribution around block edges.
+- Added debug views for isolating direct shadows, SSAO, RT-local lighting, and the water mask.
+- Rebuilt the release zip as `Client-GLSL-Shaderpack-Lab-0.1.1-mc1.20.1.zip`.
 
 ## Next Targets
 

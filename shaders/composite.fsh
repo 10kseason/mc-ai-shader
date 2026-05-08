@@ -11,6 +11,7 @@ const int colortex4Format = RGBA16;
 
 const int shadowMapResolution = 2048; // [1024 2048 4096]
 const float shadowDistance = 96.0; // [48.0 96.0 128.0 160.0]
+const float shadowIntervalSize = 3.0;
 
 uniform sampler2D colortex0;
 uniform sampler2D colortex1;
@@ -42,9 +43,11 @@ uniform int isEyeInWater;
 
 varying vec2 texcoord;
 
+#define DEBUG_VIEW 0 // [0 1 2 3 4]
 #define SHADOW_STRENGTH 0.42 // [0.00 0.18 0.28 0.42 0.55 0.70]
 #define SHADOW_SOFTNESS 1.20 // [0.50 0.75 1.20 1.80 2.60]
-#define SHADOW_BIAS 0.0014 // [0.0006 0.0010 0.0014 0.0020 0.0030]
+#define SHADOW_BIAS 0.0020 // [0.0010 0.0014 0.0020 0.0026 0.0032]
+#define SHADOW_STABILITY 0.22
 #define SUNLIGHT_TINT_STRENGTH 0.46 // [0.00 0.18 0.32 0.46 0.62 0.80]
 #define SUNLIGHT_SATURATION 0.65 // [0.40 0.50 0.65 0.80 1.00]
 #define SUNSET_WARMTH 0.78 // [0.00 0.35 0.55 0.78 0.95 1.15]
@@ -101,17 +104,21 @@ varying vec2 texcoord;
 #define SSAO_RADIUS 4.50 // [2.00 3.00 4.50 6.00 8.00]
 #define SSAO_BIAS 0.04 // [0.01 0.025 0.04 0.07 0.10]
 #define SSAO_DEPTH_SCALE 1.20 // [0.60 0.90 1.20 1.60 2.20]
+#define SSAO_STABLE_STRENGTH_CAP 0.24
+#define SSAO_STABLE_RADIUS_CAP 3.20
 #define RT_LOCAL_LIGHT_STRENGTH 0.48 // [0.00 0.18 0.32 0.48 0.66 0.86]
-#define RT_LOCAL_SHADOW_STRENGTH 0.32 // [0.00 0.12 0.22 0.32 0.46 0.62]
+#define RT_LOCAL_SHADOW_STRENGTH 0.08 // [0.00 0.06 0.08 0.12 0.22 0.32 0.46]
 #define RT_LOCAL_SCREEN_RADIUS 112.0 // [48.0 72.0 96.0 112.0 144.0 192.0]
 #define RT_LOCAL_MAX_DISTANCE 24.0 // [8.0 12.0 18.0 24.0 32.0 48.0]
 #define RT_LOCAL_TRACE_STEPS 8 // [4 6 8 10 12]
-#define RT_LOCAL_SOURCE_THRESHOLD 0.54 // [0.32 0.44 0.54 0.66 0.78]
+#define RT_LOCAL_SOURCE_THRESHOLD 0.66 // [0.44 0.54 0.66 0.78 0.88]
 #define RT_LOCAL_WARMTH 0.82 // [0.00 0.35 0.58 0.82 1.00]
 #define RT_BLOCKLIGHT_FIELD_STRENGTH 0.22 // [0.00 0.10 0.16 0.22 0.32 0.46]
-#define RT_BLOCKLIGHT_FIELD_SHADOW 0.18 // [0.00 0.08 0.12 0.18 0.26 0.36]
+#define RT_BLOCKLIGHT_FIELD_SHADOW 0.04 // [0.00 0.04 0.08 0.12 0.18 0.26]
 #define RT_BLOCKLIGHT_FIELD_RADIUS 5.0 // [2.0 3.5 5.0 7.0 10.0]
 #define RT_WEATHER_LOCAL_CONTRAST 0.16 // [0.00 0.08 0.16 0.24 0.36]
+#define RT_LOCAL_SHADOW_STABLE_CAP 0.08
+#define RT_BLOCKLIGHT_SHADOW_STABLE_CAP 0.04
 #define VOLUMETRIC_FOG_STRENGTH 0.12 // [0.00 0.08 0.12 0.18 0.26 0.34 0.48]
 #define VOLUMETRIC_FOG_DENSITY 0.006 // [0.004 0.006 0.010 0.014 0.018 0.026 0.036]
 #define VOLUMETRIC_FOG_DISTANCE 116.0 // [48.0 76.0 92.0 116.0 144.0 180.0]
@@ -281,9 +288,37 @@ float screenEdgeFade(vec2 uv) {
     return smoothstep(0.00, 0.075, min(edge.x, edge.y));
 }
 
+vec2 stabilizeShadowUv(vec2 uv) {
+    float shadowRes = float(shadowMapResolution);
+    vec2 texelCenter = (floor(uv * shadowRes) + vec2(0.5)) / shadowRes;
+    return mix(uv, texelCenter, SHADOW_STABILITY);
+}
+
 float sampleShadow(vec3 shadowScreenPos, vec2 offset) {
-    float depth = texture2D(shadowtex0, shadowScreenPos.xy + offset).r;
-    return step(shadowScreenPos.z - SHADOW_BIAS, depth);
+    vec2 sampleUv = clamp(shadowScreenPos.xy + offset, vec2(0.001), vec2(0.999));
+    float depth = texture2D(shadowtex0, sampleUv).r;
+    float receiverDepth = shadowScreenPos.z - SHADOW_BIAS;
+    float compareWidth = max(0.00025, (0.00030 + SHADOW_SOFTNESS * 0.00012) * (1.0 + SHADOW_STABILITY));
+    return smoothstep(receiverDepth - compareWidth, receiverDepth + compareWidth, depth);
+}
+
+float sampleShadowPcf(vec3 shadowScreenPos, float texel) {
+    float shadow = sampleShadow(shadowScreenPos, vec2(0.0));
+    shadow += sampleShadow(shadowScreenPos, vec2( texel, 0.0)) * 0.86;
+    shadow += sampleShadow(shadowScreenPos, vec2(-texel, 0.0)) * 0.86;
+    shadow += sampleShadow(shadowScreenPos, vec2(0.0,  texel)) * 0.86;
+    shadow += sampleShadow(shadowScreenPos, vec2(0.0, -texel)) * 0.86;
+    shadow += sampleShadow(shadowScreenPos, vec2( texel,  texel)) * 0.62;
+    shadow += sampleShadow(shadowScreenPos, vec2(-texel,  texel)) * 0.62;
+    shadow += sampleShadow(shadowScreenPos, vec2( texel, -texel)) * 0.62;
+    shadow += sampleShadow(shadowScreenPos, vec2(-texel, -texel)) * 0.62;
+
+    vec2 wide = vec2(texel * 1.85, 0.0);
+    shadow += sampleShadow(shadowScreenPos,  wide) * 0.30;
+    shadow += sampleShadow(shadowScreenPos, -wide) * 0.30;
+    shadow += sampleShadow(shadowScreenPos,  wide.yx) * 0.30;
+    shadow += sampleShadow(shadowScreenPos, -wide.yx) * 0.30;
+    return shadow / 8.12;
 }
 
 float getShadowFactor(vec2 uv, float depth) {
@@ -301,20 +336,9 @@ float getShadowFactor(vec2 uv, float depth) {
         return 1.0;
     }
 
+    shadowScreenPos.xy = stabilizeShadowUv(shadowScreenPos.xy);
     float texel = SHADOW_SOFTNESS * (1.0 + getRainCloudOcclusion() * 1.65) / float(shadowMapResolution);
-    float shadow = 0.0;
-
-    shadow += sampleShadow(shadowScreenPos, vec2(-texel, -texel));
-    shadow += sampleShadow(shadowScreenPos, vec2( 0.0,   -texel));
-    shadow += sampleShadow(shadowScreenPos, vec2( texel, -texel));
-    shadow += sampleShadow(shadowScreenPos, vec2(-texel,  0.0));
-    shadow += sampleShadow(shadowScreenPos, vec2( 0.0,    0.0));
-    shadow += sampleShadow(shadowScreenPos, vec2( texel,  0.0));
-    shadow += sampleShadow(shadowScreenPos, vec2(-texel,  texel));
-    shadow += sampleShadow(shadowScreenPos, vec2( 0.0,    texel));
-    shadow += sampleShadow(shadowScreenPos, vec2( texel,  texel));
-
-    shadow /= 9.0;
+    float shadow = sampleShadowPcf(shadowScreenPos, texel);
     float effectiveShadowStrength = SHADOW_STRENGTH * (1.0 - getRainCloudOcclusion() * RAIN_SHADOW_SOFTENING);
     return mix(1.0 - effectiveShadowStrength, 1.0, shadow);
 }
@@ -613,8 +637,9 @@ float ssaoSample(vec3 center, vec2 uv, vec2 offset) {
     float depthDiff = samplePos.z - center.z;
     float occluder = smoothstep(SSAO_BIAS, SSAO_BIAS + 1.20, depthDiff);
     float range = 1.0 / (1.0 + abs(depthDiff) * SSAO_DEPTH_SCALE);
+    float discontinuityFade = 1.0 - smoothstep(0.42, 1.35, abs(depthDiff));
 
-    return occluder * range;
+    return occluder * range * discontinuityFade;
 }
 
 float getSSAO(vec2 uv, float depth, float waterMask) {
@@ -623,7 +648,10 @@ float getSSAO(vec2 uv, float depth, float waterMask) {
     }
 
     vec3 center = getViewPosition(uv, depth);
-    vec2 px = vec2(1.0 / viewWidth, 1.0 / viewHeight) * SSAO_RADIUS;
+    float stableRadius = min(SSAO_RADIUS, SSAO_STABLE_RADIUS_CAP);
+    float viewDepth = max(-center.z, 1.0);
+    float distanceScale = clamp(5.0 / viewDepth, 0.40, 1.0);
+    vec2 px = vec2(1.0 / viewWidth, 1.0 / viewHeight) * stableRadius * distanceScale;
 
     float ao = 0.0;
     ao += ssaoSample(center, uv, vec2( px.x, 0.0));
@@ -639,7 +667,8 @@ float getSSAO(vec2 uv, float depth, float waterMask) {
     ao += ssaoSample(center, uv, vec2(0.0,  px.y) * 1.65);
     ao += ssaoSample(center, uv, vec2(0.0, -px.y) * 1.65);
 
-    float visibility = 1.0 - clamp((ao / 12.0) * SSAO_STRENGTH * 2.1, 0.0, 0.46);
+    float stableStrength = min(SSAO_STRENGTH, SSAO_STABLE_STRENGTH_CAP);
+    float visibility = 1.0 - clamp((ao / 12.0) * stableStrength * 1.55, 0.0, 0.32);
     return mix(visibility, 1.0, waterMask * 0.82);
 }
 
@@ -670,6 +699,33 @@ float getAmbientOcclusion(vec2 uv, float depth, float waterMask) {
            getPbrMaterialAO(uv, waterMask);
 }
 
+float sampleRtBlocker(vec3 rayPos, vec2 sampleUv) {
+    sampleUv = clamp(sampleUv, vec2(0.001), vec2(0.999));
+    float sceneDepth = texture2D(depthtex0, sampleUv).r;
+    if (sceneDepth >= 0.999999) {
+        return 0.0;
+    }
+
+    vec3 scenePos = getViewPosition(sampleUv, sceneDepth);
+    float rayLinearDepth = -rayPos.z;
+    float sceneLinearDepth = -scenePos.z;
+    float depthDelta = rayLinearDepth - sceneLinearDepth;
+
+    float blocker = smoothstep(0.050, 0.420, depthDelta);
+    blocker *= 1.0 - smoothstep(1.60, 4.20, depthDelta);
+    return blocker;
+}
+
+float sampleRtBlockerPcf(vec3 rayPos, vec2 rayUv) {
+    vec2 px = vec2(1.0 / viewWidth, 1.0 / viewHeight) * 1.5;
+    float blocker = sampleRtBlocker(rayPos, rayUv) * 0.36;
+    blocker += sampleRtBlocker(rayPos, rayUv + vec2( px.x, 0.0)) * 0.16;
+    blocker += sampleRtBlocker(rayPos, rayUv + vec2(-px.x, 0.0)) * 0.16;
+    blocker += sampleRtBlocker(rayPos, rayUv + vec2(0.0,  px.y)) * 0.16;
+    blocker += sampleRtBlocker(rayPos, rayUv + vec2(0.0, -px.y)) * 0.16;
+    return blocker;
+}
+
 float traceRtLocalVisibility(vec3 center, vec3 normal, vec3 lightPos) {
     vec3 origin = center + normal * 0.060;
     float visibility = 1.0;
@@ -690,18 +746,7 @@ float traceRtLocalVisibility(vec3 center, vec3 normal, vec3 lightPos) {
             continue;
         }
 
-        float sceneDepth = texture2D(depthtex0, rayScreen.xy).r;
-        if (sceneDepth >= 0.999999) {
-            continue;
-        }
-
-        vec3 scenePos = getViewPosition(rayScreen.xy, sceneDepth);
-        float rayLinearDepth = -rayPos.z;
-        float sceneLinearDepth = -scenePos.z;
-        float depthDelta = rayLinearDepth - sceneLinearDepth;
-
-        float blocker = smoothstep(0.050, 0.420, depthDelta);
-        blocker *= 1.0 - smoothstep(1.60, 4.20, depthDelta);
+        float blocker = sampleRtBlockerPcf(rayPos, rayScreen.xy);
         blocker *= screenEdgeFade(rayScreen.xy);
         visibility = min(visibility, 1.0 - blocker * 0.92);
     }
@@ -755,8 +800,8 @@ vec4 getRtBlockLightField(vec2 uv, float depth, float waterMask) {
     float distanceDamp = 1.0 / (1.0 + length(center) * 0.018);
     vec3 warmField = vec3(1.00, 0.55, 0.23) * field * receiver * normalCatch * distanceDamp * RT_BLOCKLIGHT_FIELD_STRENGTH;
 
-    float edgeBlock = smoothstep(0.12, 0.48, maxNeighbor - c) * gradientEnergy;
-    float shadow = edgeBlock * RT_BLOCKLIGHT_FIELD_SHADOW;
+    float edgeBlock = smoothstep(0.12, 0.48, maxNeighbor - c) * gradientEnergy * receiver;
+    float shadow = edgeBlock * min(RT_BLOCKLIGHT_FIELD_SHADOW, RT_BLOCKLIGHT_SHADOW_STABLE_CAP);
     return vec4(warmField, shadow);
 }
 
@@ -793,7 +838,8 @@ vec4 sampleRtLocalLight(vec2 uv, vec3 center, vec3 normal, vec2 offset, float we
     vec3 torchTint = normalizeLightTint(mix(sourceColor, vec3(1.00, 0.58, 0.22), RT_LOCAL_WARMTH));
     float energy = sourceEnergy * facing * range;
     vec3 light = torchTint * energy * visibility * RT_LOCAL_LIGHT_STRENGTH;
-    float blockedShadow = sourceEnergy * facing * range * (1.0 - visibility);
+    float shadowSource = smoothstep(0.26, 0.78, sourceEnergy);
+    float blockedShadow = energy * shadowSource * (1.0 - visibility);
 
     return vec4(light, blockedShadow);
 }
@@ -828,7 +874,8 @@ vec3 applyRtLocalEmissionLight(vec3 color, vec2 uv, float depth, float waterMask
     vec4 localLight = getRtLocalLighting(uv, depth, waterMask);
     vec4 blockField = getRtBlockLightField(uv, depth, waterMask);
     float weatherContrast = 1.0 + getRainCloudOcclusion() * RT_WEATHER_LOCAL_CONTRAST;
-    float shadow = clamp(localLight.a * RT_LOCAL_SHADOW_STRENGTH + blockField.a, 0.0, 0.46);
+    float localShadowStrength = min(RT_LOCAL_SHADOW_STRENGTH, RT_LOCAL_SHADOW_STABLE_CAP);
+    float shadow = clamp(localLight.a * localShadowStrength + blockField.a, 0.0, 0.32);
     shadow *= mix(1.0, 0.40, waterMask);
 
     vec3 shadowed = color * (1.0 - shadow);
@@ -1287,10 +1334,35 @@ vec3 applyGodRays(vec3 color, vec2 uv, float depth) {
     return color + rays * (0.32 + skyOrFar * 0.68);
 }
 
+vec3 getRtLocalDebug(vec2 uv, float depth, float waterMask) {
+    vec4 localLight = getRtLocalLighting(uv, depth, waterMask);
+    vec4 blockField = getRtBlockLightField(uv, depth, waterMask);
+    float localShadowStrength = min(RT_LOCAL_SHADOW_STRENGTH, RT_LOCAL_SHADOW_STABLE_CAP);
+    float shadow = clamp(localLight.a * localShadowStrength + blockField.a, 0.0, 0.32) / 0.32;
+    float light = clamp(luminance(localLight.rgb + blockField.rgb) * 2.4, 0.0, 1.0);
+    return vec3(light, light * 0.52 + shadow * 0.18, shadow);
+}
+
 void main() {
     vec4 source = texture2D(colortex0, texcoord);
     float depth = texture2D(depthtex0, texcoord).r;
     float waterMask = step(0.5, texture2D(colortex1, texcoord).r);
+
+#if DEBUG_VIEW == 1
+    float shadowFactor = getShadowFactor(texcoord, depth);
+    float directLight = clamp((shadowFactor - (1.0 - SHADOW_STRENGTH)) / max(SHADOW_STRENGTH, 0.001), 0.0, 1.0);
+    gl_FragData[0] = vec4(vec3(directLight), source.a);
+    return;
+#elif DEBUG_VIEW == 2
+    gl_FragData[0] = vec4(vec3(getAmbientOcclusion(texcoord, depth, waterMask)), source.a);
+    return;
+#elif DEBUG_VIEW == 3
+    gl_FragData[0] = vec4(getRtLocalDebug(texcoord, depth, waterMask), source.a);
+    return;
+#elif DEBUG_VIEW == 4
+    gl_FragData[0] = vec4(mix(vec3(0.02, 0.04, 0.08), vec3(0.0, 0.72, 1.0), waterMask), source.a);
+    return;
+#endif
 
     vec3 color = source.rgb;
     color = applyTimeOfDayLighting(color, texcoord, depth);
