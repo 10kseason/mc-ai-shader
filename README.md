@@ -1,5 +1,7 @@
 # Client GLSL Shaderpack Lab
 
+[한국어 README](README.ko.md)
+
 Minimal Iris/OptiFine-style GLSL shaderpack experiment for Minecraft Java.
 
 This project is intentionally separate from the server-side Fabric optimizer code.
