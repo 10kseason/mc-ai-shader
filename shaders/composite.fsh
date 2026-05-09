@@ -43,7 +43,7 @@ uniform int isEyeInWater;
 
 varying vec2 texcoord;
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4]
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10]
 #define SHADOW_STRENGTH 0.42 // [0.00 0.18 0.28 0.42 0.55 0.70]
 #define SHADOW_SOFTNESS 1.20 // [0.50 0.75 1.20 1.80 2.60]
 #define SHADOW_BIAS 0.0020 // [0.0010 0.0014 0.0020 0.0026 0.0032]
@@ -152,11 +152,11 @@ varying vec2 texcoord;
 #define MATERIAL_WET_SURFACE_BOOST 0.34 // [0.00 0.14 0.24 0.34 0.48 0.64]
 #define MATERIAL_EMISSIVE_LIGHT 0.20 // [0.00 0.08 0.14 0.20 0.30 0.42]
 #define MATERIAL_ROUGHNESS_RESPONSE 0.32 // [0.00 0.14 0.24 0.32 0.44 0.58]
-#define PBR_MATERIAL_AO_STRENGTH 0.72 // [0.00 0.30 0.52 0.72 0.90 1.00]
-#define PBR_NORMAL_DETAIL_STRENGTH 0.76 // [0.00 0.30 0.52 0.76 0.92 1.00]
-#define PBR_REFLECTANCE_RESPONSE 0.62 // [0.00 0.24 0.42 0.62 0.82 1.00]
-#define PBR_HEIGHT_REFLECTION_WARP 0.42 // [0.00 0.18 0.30 0.42 0.58 0.76]
-#define PBR_POROSITY_RAIN_DAMPING 0.48 // [0.00 0.20 0.34 0.48 0.66 0.86]
+#define PBR_MATERIAL_AO_STRENGTH 0.58 // [0.00 0.30 0.46 0.58 0.72 0.90]
+#define PBR_NORMAL_DETAIL_STRENGTH 0.52 // [0.00 0.24 0.38 0.52 0.68 0.84]
+#define PBR_REFLECTANCE_RESPONSE 0.42 // [0.00 0.18 0.30 0.42 0.58 0.76]
+#define PBR_HEIGHT_REFLECTION_WARP 0.18 // [0.00 0.08 0.14 0.18 0.26 0.36]
+#define PBR_POROSITY_RAIN_DAMPING 0.34 // [0.00 0.16 0.24 0.34 0.48 0.66]
 
 vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
     vec4 homPos = projectionMatrix * vec4(position, 1.0);
@@ -672,15 +672,90 @@ float getSSAO(vec2 uv, float depth, float waterMask) {
     return mix(visibility, 1.0, waterMask * 0.82);
 }
 
+float getExplicitGlassMaterial(vec4 material, vec4 extra, float waterMask) {
+    float marker = smoothstep(0.66, 0.71, extra.b) * (1.0 - smoothstep(0.74, 0.82, extra.b));
+    float smoothSurface = smoothstep(0.78, 0.93, material.g);
+    float sealedSurface = 1.0 - smoothstep(0.025, 0.15, material.a);
+    float nonMetal = 1.0 - smoothstep(0.54, 0.78, extra.r);
+    return clamp(marker * smoothSurface * sealedSurface * nonMetal * (1.0 - waterMask), 0.0, 1.0);
+}
+
+vec3 getMaterialClassDebug(vec4 material, vec4 extra, float waterMask) {
+    float smoothness = clamp(material.g, 0.0, 1.0) * (1.0 - waterMask);
+    float emission = clamp(material.b, 0.0, 1.0) * (1.0 - waterMask);
+    float porosity = clamp(material.a, 0.0, 1.0) * (1.0 - waterMask);
+    float reflectance = clamp(extra.r, 0.0, 1.0) * (1.0 - waterMask);
+    float pbrPresence = clamp(extra.b, 0.0, 1.0) * (1.0 - waterMask);
+    float upward = clamp(extra.a, 0.0, 1.0) * (1.0 - waterMask);
+    float glassMaterial = getExplicitGlassMaterial(material, extra, waterMask);
+    float metalLike = smoothstep(0.62, 0.92, reflectance) * smoothstep(0.42, 0.92, smoothness) * (1.0 - glassMaterial);
+    float emissive = smoothstep(0.10, 0.72, emission);
+    float porous = smoothstep(0.16, 0.68, porosity) * (1.0 - waterMask);
+    float pbrSurface = smoothstep(0.18, 0.92, pbrPresence) * (1.0 - glassMaterial);
+
+    vec3 base = vec3(0.030, 0.035, 0.042);
+    base = mix(base, vec3(0.00, 0.42, 1.00), waterMask);
+    base = mix(base, vec3(0.72, 0.96, 1.00), glassMaterial);
+    base = mix(base, vec3(0.92, 0.24, 1.00), metalLike);
+    base = mix(base, vec3(1.00, 0.58, 0.10), emissive);
+    base = mix(base, vec3(0.48, 0.28, 0.10), porous * (1.0 - emissive));
+    base = mix(base, vec3(0.26, 0.78, 0.32), pbrSurface * (1.0 - max(max(waterMask, glassMaterial), max(metalLike, emissive))));
+    base += vec3(0.08, 0.10, 0.12) * upward;
+    return clamp(base, 0.0, 1.0);
+}
+
+vec3 getMaterialDebugView(vec2 uv, float waterMask, int mode) {
+    vec4 material = texture2D(colortex1, uv);
+    vec4 normalData = texture2D(colortex2, uv);
+    vec4 extra = texture2D(colortex3, uv);
+    float notWater = 1.0 - waterMask;
+
+    float blockLight = clamp((material.r / 0.46) * notWater, 0.0, 1.0);
+    float smoothness = clamp(material.g, 0.0, 1.0) * notWater;
+    float emission = clamp(material.b, 0.0, 1.0) * notWater;
+    float porosity = clamp(material.a, 0.0, 1.0) * notWater;
+    float reflectance = clamp(extra.r, 0.0, 1.0) * notWater;
+    float height = clamp(extra.g, 0.0, 1.0) * notWater;
+    float pbrPresence = clamp(extra.b, 0.0, 1.0) * notWater;
+    float upward = clamp(extra.a, 0.0, 1.0) * notWater;
+    float materialAo = clamp(normalData.a, 0.0, 1.0) * notWater + waterMask;
+    float glassMaterial = getExplicitGlassMaterial(material, extra, waterMask);
+
+    if (mode == 5) {
+        return getMaterialClassDebug(material, extra, waterMask);
+    } else if (mode == 6) {
+        return vec3(smoothness, 1.0 - smoothness, glassMaterial);
+    } else if (mode == 7) {
+        return vec3(reflectance, height, pbrPresence);
+    } else if (mode == 8) {
+        return vec3(blockLight, emission, porosity);
+    } else if (mode == 9) {
+        vec3 normal = normalize(normalData.rgb * 2.0 - 1.0);
+        return mix(normal * 0.5 + 0.5, vec3(materialAo), 0.22);
+    } else if (mode == 10) {
+        return vec3(glassMaterial, upward, waterMask);
+    }
+
+    return vec3(0.0);
+}
+
 vec3 decodeStoredPbrNormal(vec2 uv, float depth, float waterMask) {
     vec3 estimated = estimateViewNormal(uv, depth);
     vec4 normalData = texture2D(colortex2, uv);
     vec4 extra = texture2D(colortex3, uv);
+    vec4 material = texture2D(colortex1, uv);
     float pbrPresence = clamp(extra.b, 0.0, 1.0) * (1.0 - waterMask);
+    float smoothness = clamp(material.g, 0.0, 1.0) * (1.0 - waterMask);
+    float reflectance = clamp(extra.r, 0.0, 1.0);
+    float metalLike = smoothstep(0.72, 0.92, reflectance);
+    float smoothSurface = smoothstep(0.66, 0.92, smoothness);
+    float glassMaterial = getExplicitGlassMaterial(material, extra, waterMask);
+    float detailStrength = PBR_NORMAL_DETAIL_STRENGTH * (1.0 - pbrPresence * smoothSurface * (0.35 + metalLike * 0.25));
+    detailStrength *= 1.0 - glassMaterial * 0.72;
 
     vec3 stored = normalize(normalData.rgb * 2.0 - 1.0);
     stored = dot(stored, estimated) < 0.0 ? -stored : stored;
-    return normalize(mix(estimated, stored, pbrPresence * PBR_NORMAL_DETAIL_STRENGTH));
+    return normalize(mix(estimated, stored, pbrPresence * detailStrength));
 }
 
 float getPbrMaterialAO(vec2 uv, float waterMask) {
@@ -901,6 +976,7 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     float upward = clamp(pbrExtra.a, 0.0, 1.0) * (1.0 - waterMask);
     float rain = getRainAmount();
     float overcast = getRainCloudOcclusion();
+    float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
 
     if (smoothness <= 0.001 && emission <= 0.001 && rain <= 0.001) {
         return color;
@@ -912,20 +988,32 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     float fresnel = pow(1.0 - facing, 2.35);
 
     vec2 px = vec2(1.0 / viewWidth, 1.0 / viewHeight);
-    float heightRelief = abs(height - 0.5) * pbrPresence;
-    vec2 reflectOffset = viewNormal.xy * px * (2.0 + smoothness * 7.0 + rain * upward * 5.0 + heightRelief * PBR_HEIGHT_REFLECTION_WARP * 10.0);
+    float metalLike = smoothstep(0.72, 0.92, reflectance);
+    metalLike *= 1.0 - glassMaterial;
+    float glassLike = smoothstep(0.66, 0.92, smoothness) * (1.0 - metalLike) * (1.0 - porosity);
+    glassLike = max(glassLike, glassMaterial);
+    float reliefStability = 1.0 - clamp(glassLike * 0.72 + metalLike * 0.54, 0.0, 0.86);
+    float heightRelief = abs(height - 0.5) * pbrPresence * reliefStability;
+    vec2 reflectOffset = viewNormal.xy * px * (1.4 + smoothness * 4.6 + rain * upward * 3.6 + heightRelief * PBR_HEIGHT_REFLECTION_WARP * 8.0);
+    reflectOffset *= mix(1.0, 0.62, glassMaterial);
     vec3 softReflection = sampleSoftReflection(uv + reflectOffset, WATER_REFLECTION_BLUR * (0.20 + smoothness * 0.36));
 
     float f0Boost = mix(0.62, 1.82, reflectance) * (1.0 + pbrPresence * PBR_REFLECTANCE_RESPONSE * 0.34);
     float impermeable = 1.0 - porosity;
     float drySpec = smoothness * MATERIAL_SPECULAR_STRENGTH * (0.20 + fresnel * 1.30) * f0Boost;
+    drySpec = mix(drySpec, smoothness * (0.10 + fresnel * 1.12), glassMaterial);
     float wetSpec = rain * upward * MATERIAL_WET_SURFACE_BOOST * (0.24 + fresnel * 1.12) * (0.30 + impermeable * 0.90) * (1.0 + overcast * 0.18);
+    wetSpec *= 1.0 - glassMaterial * 0.82;
     float specMask = clamp((drySpec + wetSpec) * (1.0 - waterMask), 0.0, 0.76);
 
     float porousWetDarkening = rain * upward * porosity * PBR_POROSITY_RAIN_DAMPING;
     vec3 roughDamped = mix(color, vec3(luminance(color)) * vec3(0.78, 0.84, 0.94), porousWetDarkening * MATERIAL_ROUGHNESS_RESPONSE);
     vec3 glossyTarget = max(roughDamped, softReflection * (0.66 + smoothness * 0.34 + rain * upward * 0.22));
     glossyTarget = mix(glossyTarget, glossyTarget * vec3(0.78, 0.88, 1.08), rain * upward * (0.18 + overcast * 0.08));
+    vec3 glassReflection = mix(color * vec3(0.94, 1.00, 1.04),
+                               softReflection * vec3(0.92, 0.98, 1.06),
+                               clamp(0.52 + fresnel * 0.34, 0.0, 1.0));
+    glossyTarget = mix(glossyTarget, max(roughDamped, glassReflection), glassMaterial * (0.52 + fresnel * 0.34));
 
     vec3 result = mix(roughDamped, glossyTarget, specMask);
 
@@ -1361,6 +1449,24 @@ void main() {
     return;
 #elif DEBUG_VIEW == 4
     gl_FragData[0] = vec4(mix(vec3(0.02, 0.04, 0.08), vec3(0.0, 0.72, 1.0), waterMask), source.a);
+    return;
+#elif DEBUG_VIEW == 5
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 5), source.a);
+    return;
+#elif DEBUG_VIEW == 6
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 6), source.a);
+    return;
+#elif DEBUG_VIEW == 7
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 7), source.a);
+    return;
+#elif DEBUG_VIEW == 8
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 8), source.a);
+    return;
+#elif DEBUG_VIEW == 9
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 9), source.a);
+    return;
+#elif DEBUG_VIEW == 10
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 10), source.a);
     return;
 #endif
 
