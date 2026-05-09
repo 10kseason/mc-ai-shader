@@ -7,12 +7,16 @@ uniform sampler2D colortex3;
 uniform sampler2D colortex5;
 uniform sampler2D colortex8;
 uniform sampler2D depthtex0;
+uniform sampler2D noisetex;
+uniform float frameTimeCounter;
 uniform float viewWidth;
 uniform float viewHeight;
 uniform float rainStrength;
 uniform float wetness;
 uniform int worldTime;
 uniform int isEyeInWater;
+uniform mat4 gbufferProjectionInverse;
+uniform mat4 gbufferModelViewInverse;
 
 varying vec2 texcoord;
 
@@ -22,6 +26,9 @@ varying vec2 texcoord;
 #define HIGHLIGHT_LIFT 0.00 // [0.00 0.04 0.08 0.12 0.16 0.22]
 #define VIGNETTE_STRENGTH 0.18 // [0.00 0.08 0.12 0.18 0.24 0.32]
 #define UNDERWATER_TINT 0.32 // [0.00 0.15 0.25 0.32 0.45 0.60]
+#define UNDERWATER_HAZE_STRENGTH 0.58 // [0.00 0.25 0.40 0.58 0.72 0.86]
+#define UNDERWATER_BLUR_STRENGTH 0.60 // [0.00 0.25 0.45 0.60 0.86 1.10]
+#define UNDERWATER_DISTORTION 0.32 // [0.00 0.16 0.25 0.32 0.50 0.70]
 #define PASTEL_STRENGTH 0.00 // [0.00 0.22 0.42 0.48 0.58 0.74 0.90]
 #define PASTEL_WASH 0.00 // [0.00 0.08 0.10 0.16 0.24 0.34]
 #define SOFT_EDGE_STRENGTH 0.14 // [0.00 0.08 0.14 0.16 0.26 0.38]
@@ -45,10 +52,10 @@ varying vec2 texcoord;
 #define CYBER_BLOOM_STRENGTH 0.10 // [0.00 0.10 0.18 0.30 0.46 0.64]
 #define SATURATION_BLOOM_STRENGTH 0.72 // [0.00 0.25 0.48 0.72 0.95 1.20]
 #define AMBIENT_GLOW_STRENGTH 0.22 // [0.00 0.12 0.22 0.34 0.50 0.68]
-#define GLASS_REFLECTION_STRENGTH 0.42 // [0.00 0.18 0.30 0.42 0.58 0.76]
-#define METAL_REFLECTION_STRENGTH 0.46 // [0.00 0.18 0.30 0.46 0.62 0.82]
-#define CYBER_REFLECTION_SPLIT 0.42 // [0.00 0.16 0.28 0.42 0.58 0.76]
-#define CYBER_GLASS_TINT 0.38 // [0.00 0.16 0.28 0.38 0.52 0.68]
+#define GLASS_REFLECTION_STRENGTH 0.36 // [0.00 0.12 0.24 0.36 0.48 0.62]
+#define METAL_REFLECTION_STRENGTH 0.36 // [0.00 0.14 0.24 0.36 0.50 0.68]
+#define CYBER_REFLECTION_SPLIT 0.12 // [0.00 0.06 0.12 0.20 0.32 0.48]
+#define CYBER_GLASS_TINT 0.12 // [0.00 0.06 0.12 0.20 0.32 0.48]
 #define FRESNEL_POWER 2.60 // [1.40 1.90 2.60 3.40 4.60]
 #define NEON_COLOR_BIAS 0.72 // [0.00 0.25 0.48 0.72 0.95 1.20]
 #define SUMMER_TONE_STRENGTH 0.12 // [0.00 0.12 0.22 0.30 0.42 0.56]
@@ -82,13 +89,16 @@ varying vec2 texcoord;
 #define MATERIAL_SURFACE_CONTRAST 0.24 // [0.00 0.10 0.18 0.24 0.34 0.46]
 #define MATERIAL_EMISSIVE_GLOW 0.34 // [0.00 0.12 0.22 0.34 0.48 0.66]
 #define MATERIAL_FRESNEL_POLISH 0.28 // [0.00 0.12 0.20 0.28 0.40 0.54]
-#define PBR_FINAL_REFLECTANCE_GAIN 0.48 // [0.00 0.20 0.34 0.48 0.66 0.86]
-#define PBR_FINAL_NORMAL_FRESNEL 0.62 // [0.00 0.24 0.44 0.62 0.82 1.00]
+#define PBR_FINAL_REFLECTANCE_GAIN 0.34 // [0.00 0.14 0.24 0.34 0.48 0.66]
+#define PBR_FINAL_NORMAL_FRESNEL 0.44 // [0.00 0.18 0.30 0.44 0.62 0.82]
 #define PALE_SURFACE_ROLLOFF 0.46 // [0.00 0.18 0.30 0.46 0.62 0.80]
 #define PALE_SURFACE_BLOOM_DAMPING 0.64 // [0.00 0.24 0.42 0.64 0.82 1.00]
 #define WATER_DAY_POST_ROLLOFF 0.82 // [0.00 0.30 0.52 0.68 0.82 0.94]
 #define WATER_DAY_BLOOM_DAMPING 0.88 // [0.00 0.30 0.52 0.70 0.88 1.00]
-#define WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH 0.72 // [0.00 0.28 0.48 0.72 0.90 1.10]
+#define WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH 0.90 // [0.00 0.28 0.48 0.72 0.90 1.10]
+#define SKY_STAR_STRENGTH 1.10
+#define SKY_MILKY_WAY_STRENGTH 1.05
+#define SKY_SHOOTING_STAR_STRENGTH 1.25
 
 #define vegetationBoost VEGETATION_BOOST
 #define bloomStrength CYBER_BLOOM_STRENGTH
@@ -131,6 +141,13 @@ float getNoonExposureMask() {
 
 float getNightExposureMask() {
     return 1.0 - smoothstep(-0.18, 0.08, getSunElevationCurve());
+}
+
+float getSkyNightFeatureMask() {
+    float t = getTime01();
+    float afterDusk = smoothstep(0.54, 0.58, t);
+    float beforeDawn = 1.0 - smoothstep(0.91, 0.97, t);
+    return clamp(afterDusk * beforeDawn, 0.0, 1.0);
 }
 
 vec3 applyTimeExposureTone(vec3 color) {
@@ -510,11 +527,13 @@ vec3 applyWaterDayPostRolloff(vec3 color, float waterMask) {
 
 vec4 sampleResolvedGeometryReflection(vec2 uv) {
     vec2 px = vec2(1.25 / viewWidth, 1.25 / viewHeight);
-    vec4 reflection = texture2D(colortex8, clamp(uv, vec2(0.001), vec2(0.999))) * 0.48;
+    vec4 reflection = texture2D(colortex8, clamp(uv, vec2(0.001), vec2(0.999))) * 0.50;
     reflection += texture2D(colortex8, clamp(uv + vec2( px.x, 0.0), vec2(0.001), vec2(0.999))) * 0.13;
     reflection += texture2D(colortex8, clamp(uv + vec2(-px.x, 0.0), vec2(0.001), vec2(0.999))) * 0.13;
-    reflection += texture2D(colortex8, clamp(uv + vec2(0.0,  px.y), vec2(0.001), vec2(0.999))) * 0.13;
-    reflection += texture2D(colortex8, clamp(uv + vec2(0.0, -px.y), vec2(0.001), vec2(0.999))) * 0.13;
+    reflection += texture2D(colortex8, clamp(uv + vec2(0.0,  px.y), vec2(0.001), vec2(0.999))) * 0.08;
+    reflection += texture2D(colortex8, clamp(uv + vec2(0.0, -px.y), vec2(0.001), vec2(0.999))) * 0.08;
+    reflection += texture2D(colortex8, clamp(uv + vec2(0.0,  px.y * 2.5), vec2(0.001), vec2(0.999))) * 0.04;
+    reflection += texture2D(colortex8, clamp(uv + vec2(0.0, -px.y * 2.5), vec2(0.001), vec2(0.999))) * 0.04;
     return reflection;
 }
 
@@ -530,15 +549,18 @@ vec3 applyResolvedWaterGeometryReflection(vec3 color, vec2 uv, float depth, floa
     }
 
     float noon = getNoonExposureMask();
+    float night = getNightExposureMask();
     float rain = getRainMood();
-    float alpha = clamp(reflection.a * WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH, 0.0, 0.78);
-    alpha *= 1.0 - noon * 0.10;
-    alpha *= 1.0 - rain * 0.16;
+    float alpha = clamp(reflection.a * WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH, 0.0, 0.86);
+    alpha *= 1.0 - noon * 0.08;
+    alpha *= 1.0 - rain * 0.12;
+    alpha *= 0.84 + night * 0.12;
 
     vec3 reflected = clamp(reflection.rgb * vec3(0.82, 0.94, 1.08), 0.0, 1.0);
-    vec3 lifted = max(color, reflected);
-    vec3 blended = mix(color, lifted, alpha * 0.72);
-    blended += reflected * alpha * 0.055;
+    reflected = mix(vec3(luma(reflected)) * vec3(0.72, 0.86, 1.08), reflected, 0.78);
+    vec3 lifted = max(color * (0.96 - alpha * 0.06), reflected);
+    vec3 blended = mix(color, lifted, alpha * 0.82);
+    blended += reflected * alpha * (0.030 + night * 0.020);
     return clamp(blended, 0.0, 1.0);
 }
 
@@ -663,14 +685,28 @@ float getScreenSpaceFresnel(vec2 uv, float depth) {
     return pow(1.0 - facing, fresnelPower) * objectMask;
 }
 
+float getExplicitGlassMaterial(vec4 material, vec4 extra, float waterMask) {
+    float marker = smoothstep(0.66, 0.71, extra.b) * (1.0 - smoothstep(0.74, 0.82, extra.b));
+    float smoothSurface = smoothstep(0.78, 0.93, material.g);
+    float sealedSurface = 1.0 - smoothstep(0.025, 0.15, material.a);
+    float nonMetal = 1.0 - smoothstep(0.54, 0.78, extra.r);
+    return clamp(marker * smoothSurface * sealedSurface * nonMetal * (1.0 - waterMask), 0.0, 1.0);
+}
+
 float getPbrAwareFresnel(vec2 uv, float depth, float waterMask) {
     float screenFresnel = getScreenSpaceFresnel(uv, depth);
     vec4 normalData = texture2D(colortex2, uv);
     vec4 extra = texture2D(colortex3, uv);
+    vec4 material = texture2D(colortex1, uv);
     float pbrPresence = clamp(extra.b, 0.0, 1.0) * (1.0 - waterMask);
+    float smoothness = clamp(material.g, 0.0, 1.0) * (1.0 - waterMask);
+    float glassMaterial = getExplicitGlassMaterial(material, extra, waterMask);
+    float reflectiveSurface = smoothstep(0.66, 0.92, smoothness);
     vec3 storedNormal = normalize(normalData.rgb * 2.0 - 1.0);
     float normalFresnel = pow(1.0 - clamp(abs(storedNormal.z), 0.0, 1.0), fresnelPower);
-    return mix(screenFresnel, max(screenFresnel, normalFresnel), pbrPresence * PBR_FINAL_NORMAL_FRESNEL);
+    float normalMix = pbrPresence * PBR_FINAL_NORMAL_FRESNEL * (1.0 - reflectiveSurface * 0.45);
+    normalMix *= 1.0 - glassMaterial * 0.55;
+    return mix(screenFresnel, max(screenFresnel, normalFresnel), normalMix);
 }
 
 vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float waterMask) {
@@ -682,6 +718,7 @@ vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float water
     float emission = clamp(material.b, 0.0, 1.0) * (1.0 - waterMask);
     float reflectance = clamp(pbrExtra.r, 0.0, 1.0);
     float pbrPresence = clamp(pbrExtra.b, 0.0, 1.0) * (1.0 - waterMask);
+    float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
     float saturation = colorSaturation(color);
     float intensity = max3(color);
     float neutralSurface = 1.0 - smoothstep(0.16, 0.54, saturation);
@@ -689,37 +726,47 @@ vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float water
     float fallbackMetal = smoothstep(0.52, 0.90, smoothness) * neutralSurface * smoothstep(0.18, 0.72, intensity) * (1.0 - pbrPresence);
     float metalMask = max(smoothstep(0.26, 0.82, smoothness) * highReflectance * neutralSurface,
                           fallbackMetal * 0.42) * METAL_REFLECTION_STRENGTH;
+    metalMask *= 1.0 - glassMaterial;
     float highlightSpec = smoothstep(0.48, 0.96, intensity) * smoothstep(0.08, 0.42, saturation);
     highlightSpec = max(highlightSpec, smoothness * (0.16 + fresnel * 0.72));
     float noon = getNoonExposureMask();
     float waterGlass = waterMask * mix(0.72, 0.24, noon);
-    float glassMask = clamp(max(waterGlass, highlightSpec * (0.20 + fresnel * 1.42)), 0.0, 1.0);
+    float explicitGlassMask = glassMaterial * (0.52 + fresnel * 0.92);
+    float inferredGlassMask = highlightSpec * (0.20 + fresnel * 1.42) * (1.0 - glassMaterial * 0.35);
+    float glassMask = clamp(max(waterGlass, max(explicitGlassMask, inferredGlassMask)), 0.0, 1.0);
     float reflectiveMask = clamp(max(glassMask * glassReflectionStrength, metalMask * (0.62 + fresnel * 0.72)), 0.0, 1.0);
 
     vec2 centerDir = normalize((uv - vec2(0.5)) + vec2(0.0001, 0.0002));
     vec2 sideDir = normalize(vec2(centerDir.y, -centerDir.x) + centerDir * 0.45);
     float offsetSize = (2.0 + fresnel * 8.0 + smoothness * 3.0) * max(glassReflectionStrength, metalMask * 0.68);
+    offsetSize *= mix(1.0, 0.58 + fresnel * 0.18, glassMaterial);
     vec2 offset = sideDir * px * offsetSize;
-    vec2 splitOffset = sideDir * px * (offsetSize * (1.0 + CYBER_REFLECTION_SPLIT * 0.90));
+    float splitStrength = CYBER_REFLECTION_SPLIT * (1.0 - glassMaterial * 0.82);
+    vec2 splitOffset = sideDir * px * (offsetSize * (1.0 + splitStrength * 0.90));
 
     vec3 reflectionA = texture2D(colortex0, clamp(uv + offset, vec2(0.001), vec2(0.999))).rgb;
     vec3 reflectionB = texture2D(colortex0, clamp(uv - offset * 0.55, vec2(0.001), vec2(0.999))).rgb;
     vec3 reflectionC = texture2D(colortex0, clamp(uv + splitOffset * vec2(0.55, -0.38), vec2(0.001), vec2(0.999))).rgb;
-    vec3 reflection = mix(mix(reflectionA, reflectionB, 0.35), reflectionC, CYBER_REFLECTION_SPLIT * 0.24);
+    vec3 reflection = mix(mix(reflectionA, reflectionB, 0.35), reflectionC, splitStrength * 0.24);
     vec3 cyanTint = reflection * vec3(0.58, 1.08, 1.26);
     vec3 magentaTint = reflection * vec3(1.22, 0.52, 1.14);
     vec3 steelReflection = mix(reflection, vec3(luma(reflection)) * vec3(0.82, 0.96, 1.15), metalMask);
     vec3 neonReflection = mix(cyanTint, magentaTint, smoothstep(0.35, 0.95, color.r + color.b - color.g));
     neonReflection = mix(neonReflection, max(neonReflection, steelReflection), metalMask * 0.58);
+    vec3 realisticReflection = mix(reflection, vec3(luma(reflection)) * vec3(0.90, 0.98, 1.07), 0.42 + fresnel * 0.22);
+    neonReflection = mix(neonReflection, realisticReflection, glassMaterial);
 
     float streakAxis = abs(dot(normalize((uv - vec2(0.5)) + vec2(0.001)), sideDir));
     float neonStreak = smoothstep(0.82, 1.0, streakAxis) * smoothstep(0.42, 1.05, intensity + emission);
-    neonReflection += vec3(0.32, 0.74, 1.18) * neonStreak * CYBER_REFLECTION_SPLIT * (0.10 + fresnel * 0.22);
+    neonStreak *= 1.0 - glassMaterial * 0.85;
+    neonReflection += vec3(0.32, 0.74, 1.18) * neonStreak * splitStrength * (0.10 + fresnel * 0.22);
 
     float edgeFade = smoothstep(0.00, 0.08, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
-    float mask = clamp(reflectiveMask * edgeFade * (0.26 + fresnel * 1.38 + metalMask * 0.36), 0.0, 0.84);
+    float mask = clamp(reflectiveMask * edgeFade * (0.26 + fresnel * 1.38 + metalMask * 0.36), 0.0, mix(0.84, 0.62, glassMaterial));
     vec3 glassTint = mix(color, color * vec3(0.70, 1.02, 1.18) + vec3(0.00, 0.016, 0.040), CYBER_GLASS_TINT * glassMask * (1.0 - metalMask));
-    color = mix(color, glassTint, glassMask * 0.34);
+    vec3 realGlassTint = color * vec3(0.94, 1.00, 1.04) + vec3(0.004, 0.010, 0.016);
+    glassTint = mix(glassTint, realGlassTint, glassMaterial);
+    color = mix(color, glassTint, max(glassMask * 0.26, glassMaterial * (0.24 + fresnel * 0.18)));
     vec3 reflectedColor = mix(color, max(color, neonReflection), mask);
     reflectedColor += neonReflection * mask * mix(0.12 + metalMask * 0.08, 0.030, waterMask * noon);
     return reflectedColor;
@@ -738,6 +785,7 @@ vec3 applyMaterialFinish(vec3 color, vec2 uv, float depth, float waterMask, vec3
     float reflectance = clamp(pbrExtra.r, 0.0, 1.0);
     float pbrPresence = clamp(pbrExtra.b, 0.0, 1.0) * (1.0 - waterMask);
     float upward = clamp(pbrExtra.a, 0.0, 1.0) * (1.0 - waterMask);
+    float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
     float rain = getRainMood();
 
     if (smoothness <= 0.001 && emission <= 0.001 && rain <= 0.001) {
@@ -750,11 +798,14 @@ vec3 applyMaterialFinish(vec3 color, vec2 uv, float depth, float waterMask, vec3
 
     vec3 polished = applyContrast(color, 1.0 + smoothness * MATERIAL_SURFACE_CONTRAST * 0.56);
     polished = mix(polished, sqrt(clamp(polished, 0.0, 1.0)), roughness * MATERIAL_SURFACE_CONTRAST * (0.12 + porosity * 0.22));
+    polished = mix(polished, color * vec3(0.94, 1.00, 1.035) + bloomColor * 0.040, glassMaterial * 0.62);
 
     vec3 sheenTint = saturateColor(max(bloomColor, color * 0.32), 1.0 + smoothness * 0.18);
     float reflectanceBoost = mix(0.70, 1.88, reflectance) * (1.0 + pbrPresence * PBR_FINAL_REFLECTANCE_GAIN);
     float sheen = smoothness * (0.18 + fresnel * 1.20) * MATERIAL_SPECULAR_STRENGTH * reflectanceBoost;
+    sheen = mix(sheen, smoothness * (0.08 + fresnel * 1.05) * MATERIAL_SPECULAR_STRENGTH, glassMaterial);
     sheen += rain * upward * (1.0 - porosity * 0.58) * (0.08 + fresnel * 0.62) * MATERIAL_FRESNEL_POLISH;
+    sheen *= 1.0 - glassMaterial * rain * 0.55;
     polished = mix(polished, max(polished, sheenTint), clamp(sheen, 0.0, 0.62));
 
     vec3 warmEmission = max(color, vec3(brightness) * vec3(1.22, 0.92, 0.58));
@@ -769,13 +820,173 @@ float vignette(vec2 uv, float strength) {
     return mix(1.0, smoothstep(0.18, 1.0, v), strength);
 }
 
-vec3 applyUnderwaterTint(vec3 color) {
+vec2 getUnderwaterFlowOffset(vec2 uv, float distanceMask) {
+    vec2 center = uv - vec2(0.5);
+    float t = frameTimeCounter;
+    float waveA = sin(uv.y * 13.0 + uv.x * 4.0 + t * 0.74);
+    float waveB = cos(uv.x * 11.0 - uv.y * 5.0 - t * 0.52);
+    float noise = texture2D(noisetex, uv * 1.75 + vec2(t * 0.013, -t * 0.009)).r - 0.5;
+    float edge = smoothstep(0.10, 0.74, length(center) * 1.42);
+    vec2 drift = vec2(waveA * 0.65 + noise, waveB * 0.45 - noise * 0.65);
+    return drift * vec2(1.0 / viewWidth, 1.0 / viewHeight) *
+           (2.0 + distanceMask * 7.0) * UNDERWATER_DISTORTION * (0.55 + edge * 0.45);
+}
+
+vec3 sampleUnderwaterSoftScene(vec2 uv, float distanceMask) {
+    float radius = UNDERWATER_BLUR_STRENGTH * (1.15 + distanceMask * 5.25);
+    vec2 px = vec2(radius / viewWidth, radius / viewHeight);
+    vec2 diag = px * 0.74;
+
+    vec3 soft = texture2D(colortex0, uv).rgb * 0.28;
+    soft += texture2D(colortex0, clamp(uv + vec2( px.x, 0.0), vec2(0.001), vec2(0.999))).rgb * 0.12;
+    soft += texture2D(colortex0, clamp(uv + vec2(-px.x, 0.0), vec2(0.001), vec2(0.999))).rgb * 0.12;
+    soft += texture2D(colortex0, clamp(uv + vec2(0.0,  px.y), vec2(0.001), vec2(0.999))).rgb * 0.12;
+    soft += texture2D(colortex0, clamp(uv + vec2(0.0, -px.y), vec2(0.001), vec2(0.999))).rgb * 0.12;
+    soft += texture2D(colortex0, clamp(uv + diag, vec2(0.001), vec2(0.999))).rgb * 0.06;
+    soft += texture2D(colortex0, clamp(uv - diag, vec2(0.001), vec2(0.999))).rgb * 0.06;
+    soft += texture2D(colortex0, clamp(uv + vec2(diag.x, -diag.y), vec2(0.001), vec2(0.999))).rgb * 0.06;
+    soft += texture2D(colortex0, clamp(uv + vec2(-diag.x, diag.y), vec2(0.001), vec2(0.999))).rgb * 0.06;
+    return soft;
+}
+
+vec3 applyUnderwaterView(vec3 color, vec2 uv, float depth) {
     if (isEyeInWater != 1) {
         return color;
     }
 
-    vec3 tint = vec3(0.62, 0.86, 1.00);
-    return mix(color, color * tint, UNDERWATER_TINT);
+    float skyMask = step(0.999999, depth);
+    float distanceMask = max(smoothstep(0.72, 0.9992, depth), skyMask);
+    float edgeMilk = smoothstep(0.14, 0.84, length(uv - vec2(0.5)) * 1.45);
+    float suspended = smoothstep(0.20, 0.86, texture2D(noisetex, uv * 2.0 + vec2(frameTimeCounter * 0.006, frameTimeCounter * -0.004)).r);
+
+    vec2 warpedUv = clamp(uv + getUnderwaterFlowOffset(uv, distanceMask), vec2(0.001), vec2(0.999));
+    vec3 blurred = sampleUnderwaterSoftScene(warpedUv, distanceMask);
+    vec3 tint = vec3(0.52, 0.82, 1.08);
+    blurred = mix(blurred, blurred * tint, clamp(UNDERWATER_TINT * 1.10, 0.0, 1.0));
+
+    float blurMix = clamp(UNDERWATER_BLUR_STRENGTH * (0.18 + distanceMask * 0.58 + edgeMilk * 0.10), 0.0, 0.86);
+    vec3 softened = mix(color, blurred, blurMix);
+
+    float night = getNightExposureMask();
+    float noon = getNoonExposureMask();
+    vec3 shallowHaze = vec3(0.52, 0.82, 0.94);
+    vec3 deepHaze = vec3(0.12, 0.34, 0.54);
+    vec3 hazeColor = mix(shallowHaze, deepHaze, clamp(distanceMask * 0.82 + night * 0.22, 0.0, 1.0));
+    hazeColor = mix(hazeColor, vec3(0.68, 0.91, 1.00), noon * 0.14);
+
+    float haze = UNDERWATER_HAZE_STRENGTH * (0.20 + distanceMask * 0.78 + edgeMilk * 0.20);
+    haze *= 0.92 + suspended * 0.18;
+    haze = clamp(haze, 0.0, 0.88);
+
+    vec3 milky = mix(max(softened, hazeColor * 0.08), hazeColor, haze);
+    float clarityDrop = clamp(haze * 0.42 + UNDERWATER_BLUR_STRENGTH * 0.12, 0.0, 0.62);
+    milky = saturateColor(milky, 1.0 - clarityDrop);
+    milky = mix(milky, vec3(luma(milky)) * vec3(0.62, 0.84, 1.02), haze * 0.18);
+    milky += vec3(0.02, 0.06, 0.10) * (0.08 + edgeMilk * 0.12 + suspended * 0.08) * UNDERWATER_HAZE_STRENGTH;
+    return clamp(milky, 0.0, 1.0);
+}
+
+float skyHash21(vec2 p) {
+    return fract(sin(dot(p, vec2(41.27, 289.53))) * 48371.5317);
+}
+
+vec3 getSkyDirection(vec2 uv) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 view = gbufferProjectionInverse * clip;
+    view.xyz /= max(abs(view.w), 0.000001);
+    vec3 viewDir = normalize(view.xyz);
+    return normalize((gbufferModelViewInverse * vec4(viewDir, 0.0)).xyz);
+}
+
+vec2 getSkyUv(vec3 dir) {
+    float yaw = atan(dir.z, dir.x) / 6.2831853 + 0.5;
+    float pitch = asin(clamp(dir.y, -1.0, 1.0)) / 3.1415927 + 0.5;
+    float celestialDrift = getTime01() * 0.12;
+    return vec2(fract(yaw + celestialDrift), pitch);
+}
+
+float getStarLayer(vec2 skyUv, float scale, float threshold, float sizeBias) {
+    vec2 p = skyUv * vec2(scale, scale * 0.58);
+    vec2 cell = floor(p);
+    vec2 local = fract(p) - 0.5;
+    float seed = skyHash21(cell);
+    float starPick = step(threshold, seed);
+    float radius = mix(0.018, 0.052, skyHash21(cell + 17.31)) * sizeBias;
+    float star = 1.0 - smoothstep(radius, radius * 2.4, length(local));
+    float twinkle = 0.70 + 0.30 * sin(frameTimeCounter * mix(1.6, 4.8, seed) + seed * 6.2831853);
+    return star * starPick * twinkle;
+}
+
+float getMilkyWayBand(vec2 skyUv) {
+    vec2 p = skyUv - vec2(0.48, 0.56);
+    p.x = fract(p.x + 0.5) - 0.5;
+
+    float angle = -0.64;
+    float c = cos(angle);
+    float s = sin(angle);
+    vec2 q = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+
+    float waviness = sin(q.x * 9.0 + 0.6) * 0.030 + sin(q.x * 23.0) * 0.012;
+    float bandDist = abs(q.y + waviness);
+    float broad = 1.0 - smoothstep(0.12, 0.38, bandDist);
+    float core = 1.0 - smoothstep(0.036, 0.130, bandDist);
+    float dust = texture2D(noisetex, fract(q * vec2(1.8, 3.6) + vec2(0.18, 0.47))).r;
+    float knots = texture2D(noisetex, fract(q * vec2(7.0, 12.0) + vec2(0.61, 0.12))).r;
+    float darkRift = smoothstep(0.50, 0.84, dust) * (1.0 - smoothstep(0.012, 0.064, abs(q.y - waviness * 0.62)));
+    return clamp((broad * 0.34 + core * (0.56 + knots * 0.28)) * (1.0 - darkRift * 0.58), 0.0, 1.0);
+}
+
+float getShootingStarLayer(vec2 skyUv, float period, vec2 salt) {
+    float eventTime = frameTimeCounter / period;
+    float event = floor(eventTime);
+    float phase = fract(eventTime);
+    float seed = skyHash21(vec2(event, period) + salt);
+
+    vec2 head = vec2(0.10 + skyHash21(vec2(event, 1.7) + salt) * 0.80,
+                     0.80 + skyHash21(vec2(event, 5.3) + salt) * 0.16);
+    vec2 dir = normalize(vec2(0.66 + seed * 0.20, -0.36 - seed * 0.18));
+    head += dir * (phase * 1.04);
+
+    vec2 delta = skyUv - head;
+    float behind = dot(delta, -dir);
+    float cross = abs(dot(delta, vec2(-dir.y, dir.x)));
+    float tail = (1.0 - smoothstep(0.000, 0.014, cross)) *
+                 smoothstep(0.010, 0.040, behind) *
+                 (1.0 - smoothstep(0.24, 0.46, behind));
+    float headGlow = 1.0 - smoothstep(0.008, 0.042, length(delta));
+    float life = smoothstep(0.02, 0.12, phase) * (1.0 - smoothstep(0.56, 0.82, phase));
+    return (tail + headGlow * 0.70) * life;
+}
+
+vec3 applyNightSkyFeatures(vec3 color, vec2 uv, float depth) {
+    if (depth < 0.999999 || isEyeInWater != 0) {
+        return color;
+    }
+
+    vec3 skyDir = getSkyDirection(uv);
+    float altitude = smoothstep(-0.02, 0.48, skyDir.y);
+    float night = getSkyNightFeatureMask();
+    float clearSky = 1.0 - getRainMood() * 0.86;
+    float visibility = clamp(night * clearSky * altitude, 0.0, 1.0);
+    if (visibility <= 0.001) {
+        return color;
+    }
+
+    vec2 skyUv = getSkyUv(skyDir);
+    float milky = getMilkyWayBand(skyUv) * SKY_MILKY_WAY_STRENGTH;
+    float stars = getStarLayer(skyUv, 155.0, 0.980, 1.08);
+    stars += getStarLayer(skyUv + vec2(0.37, 0.11), 92.0, 0.964, 1.30) * 0.72;
+    stars *= SKY_STAR_STRENGTH;
+
+    float shooting = getShootingStarLayer(skyUv, 4.8, vec2(0.0, 0.0));
+    shooting += getShootingStarLayer(skyUv + vec2(0.31, 0.0), 8.6, vec2(19.2, 4.7)) * 0.72;
+    shooting *= SKY_SHOOTING_STAR_STRENGTH;
+
+    vec3 milkyColor = vec3(0.18, 0.24, 0.42) + vec3(0.20, 0.18, 0.28) * milky;
+    vec3 starColor = vec3(0.74, 0.86, 1.00);
+    vec3 meteorColor = vec3(0.92, 0.96, 1.00);
+    vec3 skyGlow = milkyColor * milky + starColor * stars + meteorColor * shooting;
+    return clamp(color + skyGlow * visibility, 0.0, 1.0);
 }
 
 void main() {
@@ -790,7 +1001,6 @@ void main() {
     color = saturateColor(color, SATURATION);
     color = applyContrast(color, CONTRAST);
     color = liftHighlights(color, HIGHLIGHT_LIFT);
-    color = applyUnderwaterTint(color);
     color = applyPastelTone(color);
     color = applySummerBlueTone(color);
     color = applyPaleSurfaceRolloff(color, depth, waterMask);
@@ -816,6 +1026,8 @@ void main() {
     float edge = getSoftEdge(texcoord);
     vec3 ink = mix(vec3(0.055, 0.070, 0.095), color * 0.68, 0.42);
     color = mix(color, ink, edge * SOFT_EDGE_STRENGTH);
+    color = applyUnderwaterView(color, texcoord, depth);
+    color = applyNightSkyFeatures(color, texcoord, depth);
 
     color *= vignette(texcoord, VIGNETTE_STRENGTH);
 

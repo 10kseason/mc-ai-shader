@@ -26,12 +26,12 @@ uniform int isEyeInWater;
 
 varying vec2 texcoord;
 
-#define WATER_GEOMETRY_REFLECTION_STRENGTH 0.58 // [0.00 0.24 0.42 0.58 0.74 0.90]
-#define WATER_GEOMETRY_REFLECTION_STEPS 18 // [8 12 18 24 30]
-#define WATER_GEOMETRY_REFLECTION_MAX_DISTANCE 58.0 // [24.0 36.0 58.0 82.0 112.0]
-#define WATER_GEOMETRY_REFLECTION_THICKNESS 1.10 // [0.35 0.65 1.10 1.65 2.40]
+#define WATER_GEOMETRY_REFLECTION_STRENGTH 0.74 // [0.00 0.24 0.42 0.58 0.74 0.90]
+#define WATER_GEOMETRY_REFLECTION_STEPS 24 // [8 12 18 24 30]
+#define WATER_GEOMETRY_REFLECTION_MAX_DISTANCE 82.0 // [24.0 36.0 58.0 82.0 112.0]
+#define WATER_GEOMETRY_REFLECTION_THICKNESS 1.65 // [0.35 0.65 1.10 1.65 2.40]
 #define WATER_GEOMETRY_REFLECTION_BLUR 0.72 // [0.00 0.36 0.72 1.10 1.60]
-#define WATER_GEOMETRY_REFLECTION_WAVE 0.68 // [0.00 0.34 0.68 0.92 1.20]
+#define WATER_GEOMETRY_REFLECTION_WAVE 0.34 // [0.00 0.34 0.68 0.92 1.20]
 
 vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
     vec4 homPos = projectionMatrix * vec4(position, 1.0);
@@ -77,18 +77,27 @@ float getWaterDepth01(vec2 uv, float waterDepth) {
 
 vec2 getWorldWaterSlope(vec2 worldXZ) {
     vec2 p = worldXZ * 0.052;
-    float t = frameTimeCounter;
+    float t = frameTimeCounter * 0.18;
 
-    float w0 = sin(dot(p, vec2(0.86, 0.24)) * 7.0 + t * 0.98);
-    float w1 = cos(dot(p, vec2(-0.36, 0.93)) * 11.0 - t * 1.18);
-    float w2 = sin(dot(p, vec2(0.55, -0.78)) * 17.0 + t * 1.46);
+    float w0 = sin(dot(p, vec2(0.86, 0.24)) * 7.0 + t * 0.62);
+    float w1 = cos(dot(p, vec2(-0.36, 0.93)) * 11.0 - t * 0.74);
+    float w2 = sin(dot(p, vec2(0.55, -0.78)) * 17.0 + t * 0.92);
 
-    vec2 noiseCoord = p * 1.8 + vec2(t * 0.022, -t * 0.017);
+    vec2 noiseCoord = p * 1.8;
     vec2 noiseSlope = texture2D(noisetex, noiseCoord).rg - vec2(0.5);
 
     vec2 slope = vec2(w0 * 0.52 + w2 * 0.18, w1 * 0.38 - w2 * 0.12);
     slope += noiseSlope * 0.58;
     return slope * WATER_GEOMETRY_REFLECTION_WAVE;
+}
+
+float getWorldAnchoredRippleMask(vec2 worldXZ) {
+    vec2 p = worldXZ * 0.041;
+    float t = frameTimeCounter * 0.12;
+    float n = texture2D(noisetex, p * 2.15).r;
+    float r0 = sin(dot(p, vec2(0.74, 0.31)) * 9.0 + t * 0.55) * 0.5 + 0.5;
+    float r1 = cos(dot(p, vec2(-0.28, 0.96)) * 12.0 - t * 0.48) * 0.5 + 0.5;
+    return clamp(mix(n, r0 * 0.55 + r1 * 0.45, 0.34), 0.0, 1.0);
 }
 
 vec3 getWaterViewNormal(vec3 viewPos, float depthFactor) {
@@ -113,6 +122,7 @@ vec3 sampleResolvedScene(vec2 uv, float blur) {
 vec4 traceReflectedGeometry(vec2 uv, float depth) {
     vec3 waterViewPos = getViewPosition(uv, depth);
     vec3 waterPlayerPos = getPlayerPositionFromView(waterViewPos);
+    vec3 waterWorldPos = waterPlayerPos + cameraPosition;
     float depthFactor = getWaterDepth01(uv, depth);
     vec3 waterNormal = getWaterViewNormal(waterViewPos, depthFactor);
     vec3 viewDir = normalize(waterViewPos);
@@ -123,8 +133,11 @@ vec4 traceReflectedGeometry(vec2 uv, float depth) {
     }
 
     float viewDistance = length(waterViewPos);
-    float distanceFade = 1.0 - smoothstep(96.0, 184.0, viewDistance);
+    float distanceFade = 1.0 - smoothstep(84.0, 176.0, viewDistance);
     vec3 origin = waterViewPos + waterNormal * 0.08 + rayDir * 0.14;
+    float anchoredRipple = getWorldAnchoredRippleMask(waterWorldPos.xz);
+    float waterDepthFade = smoothstep(0.05, 0.42, depthFactor);
+    waterDepthFade *= 1.0 - smoothstep(0.93, 1.0, depthFactor) * 0.14;
 
     for (int i = 0; i < 30; i++) {
         if (i >= WATER_GEOMETRY_REFLECTION_STEPS) {
@@ -161,21 +174,22 @@ vec4 traceReflectedGeometry(vec2 uv, float depth) {
         float thickness = WATER_GEOMETRY_REFLECTION_THICKNESS * (1.0 + sceneLinearDepth * 0.018);
 
         if (depthDelta < thickness) {
-            float aboveWater = smoothstep(0.05, 3.5, scenePlayerPos.y - waterPlayerPos.y);
+            float aboveWater = smoothstep(-0.04, 1.65, scenePlayerPos.y - waterPlayerPos.y);
             float notSky = 1.0 - step(0.999999, sceneDepth);
             float edgeFade = screenEdgeFade(rayScreen.xy);
             float travelFade = 1.0 - smoothstep(WATER_GEOMETRY_REFLECTION_MAX_DISTANCE * 0.25,
                                                 WATER_GEOMETRY_REFLECTION_MAX_DISTANCE,
                                                 rayDistance);
             float depthFit = 1.0 - smoothstep(0.0, thickness, depthDelta);
-            float glancing = pow(1.0 - clamp(dot(-viewDir, waterNormal), 0.0, 1.0), 1.8);
-            float shallowFade = mix(0.52, 1.0, depthFactor);
+            float glancing = pow(1.0 - clamp(dot(-viewDir, waterNormal), 0.0, 1.0), 1.65);
             float rainFade = 1.0 - getRainAmount() * 0.18;
             float alpha = edgeFade * travelFade * depthFit * aboveWater * notSky * distanceFade;
-            alpha *= (0.34 + glancing * 0.78) * shallowFade * rainFade * WATER_GEOMETRY_REFLECTION_STRENGTH;
+            alpha *= (0.30 + glancing * 0.84) * waterDepthFade * rainFade * WATER_GEOMETRY_REFLECTION_STRENGTH;
+            alpha *= mix(0.86, 1.06, anchoredRipple);
 
             vec2 hitUv = clamp(rayScreen.xy, vec2(0.001), vec2(0.999));
-            float blur = WATER_GEOMETRY_REFLECTION_BLUR * (0.55 + depthFactor * 0.65 + rayDistance * 0.010);
+            float blur = WATER_GEOMETRY_REFLECTION_BLUR * (0.50 + depthFactor * 0.58 + rayDistance * 0.008);
+            blur *= mix(0.92, 1.18, anchoredRipple);
             vec3 hitColor = sampleResolvedScene(hitUv, blur);
             hitColor = mix(vec3(luminance(hitColor)) * vec3(0.72, 0.86, 1.08), hitColor, 0.76);
             hitColor *= vec3(0.78, 0.92, 1.10);

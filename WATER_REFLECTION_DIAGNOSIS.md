@@ -49,6 +49,20 @@ There was a second structural issue: composite sampled `colortex0` after water h
 - It reflects the water view ray around a wave-distorted water normal, raymarches through the screen depth buffer, rejects water hits, requires the hit geometry to be above the water surface, and stores the resolved terrain/tree color plus confidence in `colortex8.a`.
 - `final.fsh` samples and lightly blurs `colortex8`, then blends it only on water pixels before bloom and final tone operations.
 
+## 0.1.7 Stabilization Pass
+
+The reflection result itself is not pinned to world coordinates. `composite6.fsh` still computes the reflected ray from the active camera/view direction, and its Fresnel-like glancing response remains view dependent.
+
+Only the water-surface perturbation is anchored: `getWorldWaterSlope()` and the ripple confidence mask now sample from `(playerPosition + cameraPosition).xz`, so the normal/noise pattern follows the Minecraft world XZ plane instead of sliding like a screen-space overlay when the camera moves.
+
+The pass also adds stronger restraint around mirror-like artifacts:
+
+- `balanced` now uses `WATER_GEOMETRY_REFLECTION_STRENGTH=0.74`, `WATER_GEOMETRY_REFLECTION_STEPS=24`, `WATER_GEOMETRY_REFLECTION_MAX_DISTANCE=82.0`, `WATER_GEOMETRY_REFLECTION_THICKNESS=1.65`, `WATER_GEOMETRY_REFLECTION_WAVE=0.34`, and `WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH=0.90`.
+- `low` still disables `composite6` through zero reflected-geometry strength/final strength and `!program.composite6`.
+- `cinematic` raises the same reflected-geometry path to longer tracing, thicker hit acceptance, stronger final blend, and more world-anchored wave perturbation.
+- Shallow/deep water depth fade, view-distance fade, screen-edge fade, travel fade, and rain fade all multiply the reflection alpha before it reaches `colortex8.a`.
+- The final pass uses a small vertical resolve blur on `colortex8` so terrain/tree silhouettes read on the water surface, but the reflection remains depth-buffer bounded rather than becoming a full planar mirror.
+
 ## Remaining Constraints
 
 This is no longer a single-pass color flip/post blend. It now has a separate reflection texture and pass, and it can reflect visible tree/terrain geometry more convincingly on water.

@@ -3,13 +3,13 @@ setlocal
 
 set "ROOT=%~dp0"
 set "DIST=%ROOT%dist"
-set "OUT=%DIST%\Client-GLSL-Shaderpack-Lab-0.1.1-mc1.20.1.zip"
+set "OUT=%DIST%\Client-GLSL-Shaderpack-Lab-0.1.7-mc1.20.1.zip"
 
 if not exist "%DIST%" mkdir "%DIST%"
 if exist "%OUT%" del /f /q "%OUT%"
 
 pushd "%ROOT%"
-tar -a -cf "%OUT%" shaders docs pack.mcmeta LICENSE.txt README.md README.ko.md WATER_REFLECTION_DIAGNOSIS.md
+tar -a -cf "%OUT%" shaders pack.mcmeta README.md README.ko.md WATER_REFLECTION_DIAGNOSIS.md POM_PARALLAX_DIAGNOSIS.md MATERIAL_DEBUG_DIAGNOSIS.md
 popd
 if errorlevel 1 (
     echo Packaging failed.
