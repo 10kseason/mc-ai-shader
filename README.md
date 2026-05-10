@@ -10,7 +10,7 @@ This project is intentionally separate from the server-side Fabric optimizer cod
 
 ## Version
 
-Current release: `0.1.7` for Minecraft Java `1.20.1`.
+Current release: `0.1.13` for Minecraft Java `1.20.1`.
 
 ## Preview
 
@@ -34,13 +34,15 @@ In-game Iris test captures from the current shaderpack build:
 - Adds screen-space shadowing from the shadow map.
 - Adds a water mask pass for dusk-styled glossy water reflections.
 - Reads LabPBR `_n.png` and `_s.png` atlases from the active resource pack through Iris/OptiFine `normals` and `specular` samplers.
-- Adds selective LabPBR `_n` alpha height parallax/POM on stone, brick, deepslate, blackstone, sandstone, quartz, prismarine-brick, and tile-like block families through a dedicated block material mask.
+- Uses LabPBR `_n` normal and alpha height data for stable bump/normal-map relief without ray-marched POM or texture-coordinate displacement.
+- Adds `PBR_BUMP_STRENGTH` and `PBR_BUMP_HEIGHT_SHADE` controls so generated PBR maps can add material depth without atlas bleed.
 - Encodes material targets for water, smoothness, emissive strength, porosity, PBR view normals, material AO, reflectance, height, and upward-facing surfaces.
 - Shader settings are defined in `shaders/shaders.properties`.
 - Adds rain/wetness-based puddle reflection and ripple highlights.
 - Rain weather now models an overcast cloud layer: direct sun transmission, sun-path water sparkle, caustics, god rays, cloud rim light, and shadow contrast fade under rain while cool diffuse skylight and mist rise.
 - Adds PBR-aware specular response, wet surface polish, emissive glow, material AO, normal-driven fresnel, porosity rain damping, and roughness contrast controls.
 - Removes the older HBAO and screen-space ray AO paths; dynamic ambient occlusion now uses SSAO only to reduce moving-view shimmer.
+- Adds a lightweight screen-space global illumination pass in `composite.fsh`, exposed as `SCREEN_GI_STRENGTH` and `SCREEN_GI_RADIUS`, so nearby visible color can softly lift adjacent surfaces without changing the existing bloom pipeline.
 - Water now combines reflection, depth absorption, shallow-water clarity, and weak refraction distortion so the surface reads as reflective without turning into a screen mirror.
 - Underwater view now adds distance-based blue haze, soft blur, and subtle refractive drift so looking from inside water feels milky instead of only tinted.
 - Ice blocks are now mapped separately from water and receive a frosted blue material response with higher smoothness/reflectance, so lakes and frozen surfaces read differently in the same scene.
@@ -52,12 +54,14 @@ In-game Iris test captures from the current shaderpack build:
 - Water color now moves by depth: shallow water trends cyan-white, deep water trends cyan-blue.
 - Water now adds a directional sun path, shallow sand-color return, and weak near-shore caustic shimmer so highlights cluster toward the real sun direction instead of spreading evenly over the whole surface.
 - Fog now blends sky and water color instead of leaning into a flat gray wall; volumetric fog density/blue tint are restrained by default to avoid the washed-out blue-gray look seen in distant rainy or ocean views.
+- Rain and overcast now feed an extra wet-weather volumetric scatter path through `WEATHER_VOLUME_SCATTER`, increasing low horizon mist and sun-tinted fog before the view collapses into a flat gray wall.
 - Horizon blending has a dedicated water-sky mist pass to soften the flat gray render-boundary band where distant water, fog, and sky meet.
 - Vanilla cloud geometry now writes a cloud marker into the material buffer, allowing the composite pass to add density variation, inner shadow, and sun-behind-cloud scattering without changing world geometry.
-- Glass blocks and panes now use an explicit material id with high smoothness, low porosity, restrained reflectance, subtle surface grain, faint blue-green edge tint, and Fresnel-driven reflection so they read more like real glass instead of generic shiny metal.
+- Glass blocks and panes now use an explicit material id with dry pane-like smoothness, low porosity, restrained reflectance, subtle surface grain, neutral edge lift, and reduced reflection blur so they do not read like water.
 - High-reflectance metal surfaces still use PBR smoothness/reflectance plus Fresnel, but cyan/magenta reflection split is reduced on glass-specific pixels.
-- Generated vanilla PBR maps from `vanilla-pbr-map-maker/dist/Vanilla-PBR-Generated.zip` are now treated conservatively: glass/ice height is kept near neutral, metal normal detail is damped, stone smoothness stays rougher, and PBR height warp/POM depth are restrained by default.
+- Generated vanilla PBR maps from `vanilla-pbr-map-maker/dist/Vanilla-PBR-Generated.zip` are now treated conservatively: glass is kept dry and nearly flat, ice height stays near neutral, metal normal detail is damped, stone smoothness stays rougher, and bump height shading is restrained by default.
 - Leaf-tinted terrain gets a stronger natural green response without vertex sway, keeping grass and foliage stable while standing still.
+- Leaf-like terrain now receives a controlled backlight/subsurface response through `LEAF_SSS_STRENGTH`, using material color and normal cues so foliage can glow against sun direction without requiring vertex motion.
 - The main scene and bloom buffers now stay in a precise `0..1` LDR range with 16-bit normalized color targets instead of carrying overbright HDR values.
 - The final pass uses an LDR precision curve for shadow toe, highlight shoulder, low-black-floor detail, and local contrast preservation without 20-stop HDR compression.
 - Default final color grading now favors physically plausible exposure over stylized filters: pastel wash, BF3-style blue grading, heavy rain gray-blue tint, and over-bright middle-gray mapping are reduced or disabled by default.
@@ -73,7 +77,7 @@ In-game Iris test captures from the current shaderpack build:
 - RT source detection now uses a stricter warm-texture source mask so ordinary torch-lit walls are less likely to become fake emitters.
 - Adds a block-light field fallback in the material mask: non-water surfaces encode local block light below the water-mask threshold, then composite uses it for stable warm local light and shadow-edge darkening even when the torch itself is off screen.
 - Adds Iris shader profiles for `low`, `balanced`, and `cinematic`. `balanced` matches the current shader defaults, while the other two profiles lower or raise the same setting groups for direct in-game comparison.
-- Adds a `Debug View` shader setting for isolating shadow-only, SSAO-only, RT-local-only, water-mask, material-class, smoothness/roughness/glass, reflectance/height/PBR, block-light/emissive/porosity, normal/AO, and glass/up/water outputs.
+- Adds a `Debug View` shader setting for isolating shadow-only, SSAO-only, RT-local-only, water-mask, material-class, smoothness/roughness/glass, reflectance/height/PBR, block-light/emissive/porosity, normal/AO, glass/up/water, and bump-detail outputs.
 - Stabilizes block-edge shadows by softening shadow-map sampling, reducing screen-space RT local shadow strength, and removing vegetation vertex wind movement.
 - Current RT limitation: visible emissive sources use screen-space tracing, while the block-light fallback is a stable light-field approximation rather than a full voxel light list.
 - Current water reflection limitation: the new reflection texture is a half-resolution Iris pass for visible reflected geometry. It is still bounded by screen/depth-buffer visibility, not a full second mirrored world render, which keeps performance closer to this lab pack's current budget.
@@ -82,8 +86,10 @@ In-game Iris test captures from the current shaderpack build:
 ## Install
 
 1. Run `package_shaderpack.bat`.
-2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.7-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
+2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.13-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
 3. Enable it from Iris or OptiFine shader settings.
+
+The packaging script also refreshes `dist/Client-GLSL-Shaderpack-Lab-1.20.1.zip` as a stable comparison alias.
 
 During development, you can also copy this folder directly into `shaderpacks/` and reload shaders in-game.
 
@@ -91,9 +97,9 @@ During development, you can also copy this folder directly into `shaderpacks/` a
 
 Open Iris shader settings and use the profile button at the top of the main options screen.
 
-- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass and sets selective POM to `POM_STRENGTH=0.00`, `POM_STEPS=0`.
-- `balanced`: uses the source defaults and the generated PBR map tuning baseline. Use this when comparing vanilla glass, metal blocks, ice, stone, brick, tile, polished material response, and the stabilized water reflected-geometry pass. Selective POM runs at a moderate 8-step setting.
-- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO, longer RT local light tracing, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, stronger world-anchored water perturbation, and stronger but still height-damped material reflections. Selective POM rises to 14 steps and a deeper height scale.
+- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, bump relief, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass.
+- `balanced`: uses the source defaults and the generated PBR map tuning baseline. Use this when comparing vanilla glass, metal blocks, ice, stone, brick, tile, polished material response, the stabilized water reflected-geometry pass, screen GI, leaf SSS, wet-weather scatter, and bump-map relief.
+- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO and screen GI, longer RT local light tracing, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, stronger leaf SSS, stronger bump relief, stronger world-anchored water perturbation, and stronger but still height-damped material reflections.
 
 Suggested test loop:
 
@@ -103,6 +109,44 @@ Suggested test loop:
 4. If you touch an individual slider after selecting a profile, Iris may show `Custom`; reselect the profile to return to the preset.
 
 ## Changelog
+
+### 0.1.13
+
+- Retuned explicit glass so it reads as a dry thin pane instead of water: lower blue tint, lower reflectance, less reflection blur, and neutral glass height.
+- Added `GLASS_REFLECTION_STRENGTH` to the active composite shader path and lowered profile defaults.
+- Updated `vanilla-pbr-map-maker` glass preset to emit flatter, lower-F0 generated glass maps.
+- Added `GLASS_MATERIAL_DIAGNOSIS.md` for Iris debug-view checks.
+
+### 0.1.12
+
+- Removed the active POM/parallax ray-march path and stopped offsetting texture coordinates from `_n` alpha height.
+- Added stable LabPBR bump shading through `PBR_BUMP_STRENGTH` and `PBR_BUMP_HEIGHT_SHADE`.
+- Replaced `Debug View -> POM Safety` with `Debug View -> Bump Detail`.
+- Added `BUMP_MAPPING_DIAGNOSIS.md` and removed the POM diagnosis document from the packaged release zip.
+
+### 0.1.11
+
+- Split large POM travel risk from actual atlas clamp reporting, so `Debug View -> POM Safety` shows blue only for real clamp pressure instead of broad high-travel surfaces.
+- Added a final safety depth fade that drives the POM ray toward zero when grazing, height, travel, or atlas risk is high.
+
+### 0.1.10
+
+- Tightened the POM safety path for PBR packs that expose flat extreme `_n` alpha instead of usable height data. Those sprites now skip POM instead of keeping a reduced-depth parallax ray.
+- Reduced remaining height-overreaction depth when safety does fire, so green POM safety regions suppress the effect much harder.
+- Updated the POM diagnosis notes for the solid-green safety view case.
+
+### 0.1.9
+
+- Implemented the lower-risk parts of `docs/shaderpack_enhancement_plan.md`: screen-space GI, leaf subsurface/backlight response, and wet-weather volumetric scatter.
+- Added Iris controls and profile values for `SCREEN_GI_STRENGTH`, `SCREEN_GI_RADIUS`, `LEAF_SSS_STRENGTH`, and `WEATHER_VOLUME_SCATTER`.
+- Added `ADVANCED_ENHANCEMENT_DIAGNOSIS.md` and packaged the enhancement plan document with the release zip for direct comparison testing.
+- Left full TAA as a planned follow-up because it needs history buffer allocation, velocity encoding, projection jitter, and in-game ghosting validation.
+
+### 0.1.8
+
+- Added a resource-pack variation safety path to selective POM. POM now receives sprite bounds from `mc_midTexCoord`, fades under grazing angles and extreme height response, clamps ray travel inside the active atlas sprite, and caps maximum UV travel before atlas bleed can occur.
+- Added `Debug View -> POM Safety`: red means grazing-angle fade, green means height overreaction fade, and blue means atlas travel clamp.
+- Updated the POM and material-debug diagnosis docs and rebuilt the Iris-ready package as `Client-GLSL-Shaderpack-Lab-0.1.8-mc1.20.1.zip`.
 
 ### 0.1.7
 
@@ -154,4 +198,4 @@ Suggested test loop:
 
 ## Next Targets
 
-- Tune the selective POM block list and height scale after one in-game pass against real resource-pack height maps.
+- Compare `Debug View -> Bump Detail` against several real LabPBR packs and tune bump height so generated maps add relief without noisy flat surfaces.
