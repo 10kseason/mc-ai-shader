@@ -43,7 +43,7 @@ uniform int isEyeInWater;
 
 varying vec2 texcoord;
 
-#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10]
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10 11]
 #define SHADOW_STRENGTH 0.42 // [0.00 0.18 0.28 0.42 0.55 0.70]
 #define SHADOW_SOFTNESS 1.20 // [0.50 0.75 1.20 1.80 2.60]
 #define SHADOW_BIAS 0.0020 // [0.0010 0.0014 0.0020 0.0026 0.0032]
@@ -106,6 +106,8 @@ varying vec2 texcoord;
 #define SSAO_DEPTH_SCALE 1.20 // [0.60 0.90 1.20 1.60 2.20]
 #define SSAO_STABLE_STRENGTH_CAP 0.24
 #define SSAO_STABLE_RADIUS_CAP 3.20
+#define SCREEN_GI_STRENGTH 0.14 // [0.00 0.06 0.10 0.14 0.22 0.34]
+#define SCREEN_GI_RADIUS 10.0 // [4.0 7.0 10.0 14.0 20.0]
 #define RT_LOCAL_LIGHT_STRENGTH 0.48 // [0.00 0.18 0.32 0.48 0.66 0.86]
 #define RT_LOCAL_SHADOW_STRENGTH 0.08 // [0.00 0.06 0.08 0.12 0.22 0.32 0.46]
 #define RT_LOCAL_SCREEN_RADIUS 112.0 // [48.0 72.0 96.0 112.0 144.0 192.0]
@@ -124,6 +126,7 @@ varying vec2 texcoord;
 #define VOLUMETRIC_FOG_DISTANCE 116.0 // [48.0 76.0 92.0 116.0 144.0 180.0]
 #define VOLUMETRIC_FOG_BLUE_TINT 0.12 // [0.00 0.12 0.24 0.26 0.34 0.48 0.64]
 #define VOLUMETRIC_FOG_NOISE 0.18 // [0.00 0.10 0.18 0.28 0.40 0.56]
+#define WEATHER_VOLUME_SCATTER 0.24 // [0.00 0.10 0.16 0.24 0.36 0.52]
 #define FOG_SKY_WATER_BLEND 0.34 // [0.00 0.20 0.34 0.46 0.60 0.76]
 #define FOG_GRAY_WALL_REDUCTION 0.72 // [0.00 0.24 0.40 0.56 0.72 0.90]
 #define HORIZON_BLEND_STRENGTH 0.30 // [0.00 0.12 0.22 0.30 0.42 0.56]
@@ -152,11 +155,13 @@ varying vec2 texcoord;
 #define MATERIAL_WET_SURFACE_BOOST 0.34 // [0.00 0.14 0.24 0.34 0.48 0.64]
 #define MATERIAL_EMISSIVE_LIGHT 0.20 // [0.00 0.08 0.14 0.20 0.30 0.42]
 #define MATERIAL_ROUGHNESS_RESPONSE 0.32 // [0.00 0.14 0.24 0.32 0.44 0.58]
+#define LEAF_SSS_STRENGTH 0.26 // [0.00 0.12 0.18 0.26 0.38 0.52]
 #define PBR_MATERIAL_AO_STRENGTH 0.58 // [0.00 0.30 0.46 0.58 0.72 0.90]
 #define PBR_NORMAL_DETAIL_STRENGTH 0.52 // [0.00 0.24 0.38 0.52 0.68 0.84]
 #define PBR_REFLECTANCE_RESPONSE 0.42 // [0.00 0.18 0.30 0.42 0.58 0.76]
 #define PBR_HEIGHT_REFLECTION_WARP 0.18 // [0.00 0.08 0.14 0.18 0.26 0.36]
 #define PBR_POROSITY_RAIN_DAMPING 0.34 // [0.00 0.16 0.24 0.34 0.48 0.66]
+#define GLASS_REFLECTION_STRENGTH 0.18 // [0.00 0.08 0.12 0.18 0.28 0.40]
 
 vec3 projectAndDivide(mat4 projectionMatrix, vec3 position) {
     vec4 homPos = projectionMatrix * vec4(position, 1.0);
@@ -184,6 +189,20 @@ vec3 projectViewToScreen(vec3 viewPos) {
 
 float luminance(vec3 color) {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
+float maxComponent(vec3 color) {
+    return max(max(color.r, color.g), color.b);
+}
+
+float minComponent(vec3 color) {
+    return min(min(color.r, color.g), color.b);
+}
+
+float colorSaturation(vec3 color) {
+    float mx = maxComponent(color);
+    float mn = minComponent(color);
+    return clamp((mx - mn) / max(mx, 0.001), 0.0, 1.0);
 }
 
 float getTime01() {
@@ -674,7 +693,7 @@ float getSSAO(vec2 uv, float depth, float waterMask) {
 
 float getExplicitGlassMaterial(vec4 material, vec4 extra, float waterMask) {
     float marker = smoothstep(0.66, 0.71, extra.b) * (1.0 - smoothstep(0.74, 0.82, extra.b));
-    float smoothSurface = smoothstep(0.78, 0.93, material.g);
+    float smoothSurface = smoothstep(0.70, 0.86, material.g);
     float sealedSurface = 1.0 - smoothstep(0.025, 0.15, material.a);
     float nonMetal = 1.0 - smoothstep(0.54, 0.78, extra.r);
     return clamp(marker * smoothSurface * sealedSurface * nonMetal * (1.0 - waterMask), 0.0, 1.0);
@@ -734,6 +753,12 @@ vec3 getMaterialDebugView(vec2 uv, float waterMask, int mode) {
         return mix(normal * 0.5 + 0.5, vec3(materialAo), 0.22);
     } else if (mode == 10) {
         return vec3(glassMaterial, upward, waterMask);
+    } else if (mode == 11) {
+        vec3 normal = normalize(normalData.rgb * 2.0 - 1.0);
+        float bumpVector = smoothstep(0.04, 0.42, length(normal.xy));
+        float heightRelief = smoothstep(0.006, 0.080, abs(height - 0.5));
+        float pbrSurface = smoothstep(0.84, 0.99, pbrPresence) * (1.0 - glassMaterial);
+        return vec3(bumpVector, heightRelief, pbrSurface) * notWater;
     }
 
     return vec3(0.0);
@@ -960,6 +985,100 @@ vec3 applyRtLocalEmissionLight(vec3 color, vec2 uv, float depth, float waterMask
     return color;
 }
 
+vec4 sampleScreenGiTap(vec2 uv, vec3 center, vec3 normal, vec2 offset, float weight) {
+    vec2 sampleUv = clamp(uv + offset, vec2(0.001), vec2(0.999));
+    float sampleDepth = texture2D(depthtex0, sampleUv).r;
+    if (sampleDepth >= 0.999999) {
+        return vec4(0.0);
+    }
+
+    vec3 samplePos = getViewPosition(sampleUv, sampleDepth);
+    vec3 delta = samplePos - center;
+    float distanceToSample = length(delta);
+    if (distanceToSample <= 0.025) {
+        return vec4(0.0);
+    }
+
+    vec3 sampleDir = delta / distanceToSample;
+    float normalCatch = smoothstep(-0.18, 0.48, dot(normal, sampleDir));
+    float range = 1.0 / (1.0 + distanceToSample * distanceToSample * 0.055);
+    float depthCoherence = 1.0 - smoothstep(18.0, 62.0, distanceToSample);
+    float contribution = weight * normalCatch * range * depthCoherence;
+
+    vec3 sampleColor = texture2D(colortex0, sampleUv).rgb;
+    float colorEnergy = clamp(luminance(sampleColor) * 1.20 + colorSaturation(sampleColor) * 0.28, 0.0, 1.0);
+    return vec4(sampleColor * contribution * (0.35 + colorEnergy * 0.65), contribution);
+}
+
+vec3 applyScreenSpaceGlobalIllumination(vec3 color, vec2 uv, float depth, float waterMask) {
+    if (SCREEN_GI_STRENGTH <= 0.001 || depth >= 0.999999 || isEyeInWater != 0) {
+        return color;
+    }
+
+    vec3 center = getViewPosition(uv, depth);
+    vec3 normal = decodeStoredPbrNormal(uv, depth, waterMask);
+    vec2 px = vec2(SCREEN_GI_RADIUS / viewWidth, SCREEN_GI_RADIUS / viewHeight);
+    vec2 normalBias = normal.xy * px * 0.42;
+
+    vec4 gi = vec4(0.0);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2( 1.00,  0.00) * px * 0.62, 1.00);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2(-1.00,  0.00) * px * 0.62, 1.00);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2( 0.00,  1.00) * px * 0.62, 0.92);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2( 0.00, -1.00) * px * 0.62, 0.92);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2( 0.71,  0.71) * px * 0.92, 0.72);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2(-0.71,  0.71) * px * 0.92, 0.72);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2( 0.71, -0.71) * px * 0.92, 0.72);
+    gi += sampleScreenGiTap(uv, center, normal, normalBias + vec2(-0.71, -0.71) * px * 0.92, 0.72);
+
+    if (gi.a <= 0.001) {
+        return color;
+    }
+
+    vec3 bounce = gi.rgb / gi.a;
+    vec3 neutralBounce = vec3(luminance(bounce));
+    vec3 coloredBounce = mix(neutralBounce, bounce, 0.72);
+    float receiver = smoothstep(0.03, 0.62, luminance(color)) * (1.0 - smoothstep(0.82, 1.12, maxComponent(color)));
+    receiver *= 1.0 - waterMask * 0.48;
+    vec3 lifted = color + coloredBounce * (SCREEN_GI_STRENGTH * receiver * (0.22 + gi.a * 0.10));
+    return mix(color, max(color, lifted), clamp(SCREEN_GI_STRENGTH * (0.42 + gi.a * 0.16), 0.0, 0.36));
+}
+
+float getFoliageSssMask(vec3 baseColor, vec4 material, float waterMask) {
+    float greenLead = smoothstep(0.02, 0.26, baseColor.g - max(baseColor.r * 0.92, baseColor.b));
+    float naturalSaturation = smoothstep(0.10, 0.46, colorSaturation(baseColor));
+    float visible = smoothstep(0.035, 0.42, luminance(baseColor));
+    float notSmooth = 1.0 - smoothstep(0.52, 0.90, material.g);
+    float porosityAssist = 0.62 + clamp(material.a, 0.0, 1.0) * 0.38;
+    return clamp(greenLead * naturalSaturation * visible * notSmooth * porosityAssist * (1.0 - waterMask), 0.0, 1.0);
+}
+
+vec3 applyLeafSubsurfaceScattering(vec3 color, vec2 uv, float depth, float waterMask) {
+    if (LEAF_SSS_STRENGTH <= 0.001 || depth >= 0.999999 || isEyeInWater != 0) {
+        return color;
+    }
+
+    vec4 material = texture2D(colortex1, uv);
+    vec3 baseColor = texture2D(colortex0, uv).rgb;
+    float foliage = getFoliageSssMask(baseColor, material, waterMask);
+    if (foliage <= 0.001) {
+        return color;
+    }
+
+    vec3 viewNormal = decodeStoredPbrNormal(uv, depth, waterMask);
+    vec3 lightDir = normalize(mix(moonPosition, sunPosition, getSunPresence()));
+    float backLight = smoothstep(-0.18, 0.62, dot(-viewNormal, lightDir));
+    float horizonWarmth = getHorizonSunWarmth();
+    float weatherSoft = 1.0 - getRainCloudOcclusion() * 0.38;
+    vec3 leafTint = mix(vec3(0.42, 0.74, 0.30), vec3(0.92, 0.72, 0.34), horizonWarmth * 0.52);
+    leafTint = mix(leafTint, getOvercastSkyTint() * vec3(0.70, 0.86, 0.58), getRainAmount() * 0.22);
+
+    float sss = foliage * backLight * LEAF_SSS_STRENGTH * weatherSoft;
+    sss *= 0.42 + getSunPresence() * 0.58;
+    vec3 glowBase = max(color, vec3(luminance(color)) * leafTint);
+    vec3 glow = glowBase + leafTint * (0.018 + luminance(baseColor) * 0.075) * sss;
+    return mix(color, glow, clamp(sss, 0.0, 0.58));
+}
+
 vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterMask) {
     if (depth >= 0.999999 || isEyeInWater != 0) {
         return color;
@@ -995,13 +1114,14 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     float reliefStability = 1.0 - clamp(glassLike * 0.72 + metalLike * 0.54, 0.0, 0.86);
     float heightRelief = abs(height - 0.5) * pbrPresence * reliefStability;
     vec2 reflectOffset = viewNormal.xy * px * (1.4 + smoothness * 4.6 + rain * upward * 3.6 + heightRelief * PBR_HEIGHT_REFLECTION_WARP * 8.0);
-    reflectOffset *= mix(1.0, 0.62, glassMaterial);
-    vec3 softReflection = sampleSoftReflection(uv + reflectOffset, WATER_REFLECTION_BLUR * (0.20 + smoothness * 0.36));
+    reflectOffset *= mix(1.0, 0.16, glassMaterial);
+    float reflectionBlur = WATER_REFLECTION_BLUR * mix(0.20 + smoothness * 0.36, 0.055 + GLASS_REFLECTION_STRENGTH * 0.12, glassMaterial);
+    vec3 softReflection = sampleSoftReflection(uv + reflectOffset, reflectionBlur);
 
     float f0Boost = mix(0.62, 1.82, reflectance) * (1.0 + pbrPresence * PBR_REFLECTANCE_RESPONSE * 0.34);
     float impermeable = 1.0 - porosity;
     float drySpec = smoothness * MATERIAL_SPECULAR_STRENGTH * (0.20 + fresnel * 1.30) * f0Boost;
-    drySpec = mix(drySpec, smoothness * (0.10 + fresnel * 1.12), glassMaterial);
+    drySpec = mix(drySpec, smoothness * GLASS_REFLECTION_STRENGTH * (0.10 + fresnel * 0.72), glassMaterial);
     float wetSpec = rain * upward * MATERIAL_WET_SURFACE_BOOST * (0.24 + fresnel * 1.12) * (0.30 + impermeable * 0.90) * (1.0 + overcast * 0.18);
     wetSpec *= 1.0 - glassMaterial * 0.82;
     float specMask = clamp((drySpec + wetSpec) * (1.0 - waterMask), 0.0, 0.76);
@@ -1010,10 +1130,11 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     vec3 roughDamped = mix(color, vec3(luminance(color)) * vec3(0.78, 0.84, 0.94), porousWetDarkening * MATERIAL_ROUGHNESS_RESPONSE);
     vec3 glossyTarget = max(roughDamped, softReflection * (0.66 + smoothness * 0.34 + rain * upward * 0.22));
     glossyTarget = mix(glossyTarget, glossyTarget * vec3(0.78, 0.88, 1.08), rain * upward * (0.18 + overcast * 0.08));
-    vec3 glassReflection = mix(color * vec3(0.94, 1.00, 1.04),
-                               softReflection * vec3(0.92, 0.98, 1.06),
-                               clamp(0.52 + fresnel * 0.34, 0.0, 1.0));
-    glossyTarget = mix(glossyTarget, max(roughDamped, glassReflection), glassMaterial * (0.52 + fresnel * 0.34));
+    float glassReflectionMix = clamp(GLASS_REFLECTION_STRENGTH * (0.26 + fresnel * 0.48), 0.0, 0.42);
+    vec3 glassReflection = mix(color * vec3(0.98, 1.00, 1.01),
+                               softReflection * vec3(0.98, 1.00, 1.015),
+                               glassReflectionMix);
+    glossyTarget = mix(glossyTarget, max(roughDamped, glassReflection), glassMaterial * (0.28 + fresnel * 0.18));
 
     vec3 result = mix(roughDamped, glossyTarget, specMask);
 
@@ -1244,8 +1365,12 @@ vec3 applyVolumetricFog(vec3 color, vec2 uv, float depth, float waterMask) {
     float overcast = getRainCloudOcclusion();
     float night = getNightVisibility();
     float rainBoost = 1.0 + rain * 0.32 + overcast * RAIN_OVERCAST_MIST;
+    float weatherColumn = clamp((rain * 0.62 + overcast * 0.38) * WEATHER_VOLUME_SCATTER *
+                                farFade * (0.38 + horizonBand * 0.46 + lowMist * 0.28),
+                                0.0, 0.42);
     float fogMask = distanceFog * farFade * (0.56 + horizonBand * 0.56 + lowMist * 0.34);
     fogMask = clamp(fogMask * volumeBreakup * rainBoost * VOLUMETRIC_FOG_STRENGTH, 0.0, 0.76);
+    fogMask += weatherColumn * (0.18 + distanceFog * 0.42);
     fogMask *= 1.0 - FOG_GRAY_WALL_REDUCTION * 0.26;
     fogMask = mix(fogMask, fogMask * 0.58, waterMask);
     fogMask = clamp(fogMask, 0.0, 0.52);
@@ -1253,6 +1378,9 @@ vec3 applyVolumetricFog(vec3 color, vec2 uv, float depth, float waterMask) {
     float waterInfluence = max(waterMask, horizonBand * 0.46 + lowMist * 0.20);
     vec3 fogColor = getSkyWaterFogColor(horizonBand, night, rain, waterInfluence);
     fogColor = mix(fogColor, vec3(0.56, 0.74, 1.00), VOLUMETRIC_FOG_BLUE_TINT * 0.16);
+    fogColor = mix(fogColor,
+                   normalizeLightTint(getPhysicalSunColor()) * vec3(0.92, 0.92, 0.86),
+                   weatherColumn * getSunPresence() * getDirectSunTransmission() * 0.38);
 
     vec3 lifted = max(color, fogColor * 0.12);
     return mix(lifted, fogColor, fogMask);
@@ -1468,12 +1596,17 @@ void main() {
 #elif DEBUG_VIEW == 10
     gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 10), source.a);
     return;
+#elif DEBUG_VIEW == 11
+    gl_FragData[0] = vec4(getMaterialDebugView(texcoord, waterMask, 11), source.a);
+    return;
 #endif
 
     vec3 color = source.rgb;
     color = applyTimeOfDayLighting(color, texcoord, depth);
     color *= getAmbientOcclusion(texcoord, depth, waterMask);
     color = applyRtLocalEmissionLight(color, texcoord, depth, waterMask);
+    color = applyScreenSpaceGlobalIllumination(color, texcoord, depth, waterMask);
+    color = applyLeafSubsurfaceScattering(color, texcoord, depth, waterMask);
     color = applyMaterialSurfaceResponse(color, texcoord, depth, waterMask);
     color = applyCinematicWaterReflection(color, texcoord, depth, waterMask);
     color = applyRainReflection(color, texcoord, depth, waterMask);
