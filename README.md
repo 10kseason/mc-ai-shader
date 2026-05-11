@@ -10,7 +10,7 @@ This project is intentionally separate from the server-side Fabric optimizer cod
 
 ## Version
 
-Current release: `0.1.16` for Minecraft Java `1.20.1`.
+Current release: `0.1.17` for Minecraft Java `1.20.1`.
 
 ## Preview
 
@@ -64,8 +64,9 @@ In-game Iris test captures from the current shaderpack build:
 - Generated vanilla PBR maps from `vanilla-pbr-map-maker/dist/Vanilla-PBR-Generated.zip` are now treated conservatively: glass is kept dry and nearly flat, ice height stays near neutral, metal normal detail is damped, stone smoothness stays rougher, and bump height shading is restrained by default.
 - Leaf-tinted terrain gets a stronger natural green response without vertex sway, keeping grass and foliage stable while standing still.
 - Leaf-like terrain now receives a controlled backlight/subsurface response through `LEAF_SSS_STRENGTH`, using material color and normal cues so foliage can glow against sun direction without requiring vertex motion.
-- The main scene and bloom buffers now keep HDR headroom in half-float color targets, then apply a restrained final shoulder instead of clipping bright values early.
-- The final pass uses luminance-preserving HDR tone mapping before the LDR precision curve, so overall color ratios and brightness survive highlight rolloff better.
+- The main scene and bloom buffers stay on the LDR path; final grading uses local detail and highlight rolloff without carrying HDR headroom.
+- Water brightness now follows ambient scene/sky light as well as direct sun, with a night cap so morning water does not crush dark and night water does not glow too bright.
+- Foliage PBR/normal response is damped at night so leaf and grass surfaces do not break into blue speckled highlights.
 - Default final color grading now favors physically plausible exposure over stylized filters: pastel wash, BF3-style blue grading, heavy rain gray-blue tint, and over-bright middle-gray mapping are reduced or disabled by default.
 - Sunlight tint keeps its brightness but defaults to 35% lower daylight saturation through `SUNLIGHT_SATURATION`, reducing over-yellow sand, cloud scatter, and water glints.
 - Adds color grading, contrast, vignette, and underwater tint handling.
@@ -88,7 +89,7 @@ In-game Iris test captures from the current shaderpack build:
 ## Install
 
 1. Run `package_shaderpack.bat`.
-2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.16-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
+2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.17-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
 3. Enable it from Iris or OptiFine shader settings.
 
 The packaging script also refreshes `dist/Client-GLSL-Shaderpack-Lab-1.20.1.zip` as a stable comparison alias.
@@ -111,6 +112,12 @@ Suggested test loop:
 4. If you touch an individual slider after selecting a profile, Iris may show `Custom`; reselect the profile to return to the preset.
 
 ## Changelog
+
+### 0.1.17
+
+- Removed the `0.1.16` HDR buffer/tone-mapping experiment and returned scene/bloom targets to the bounded LDR path.
+- Made water brightness respond to ambient sky and nearby scene brightness, not only direct sun, while capping the result at night to avoid glowing dark-time water.
+- Dampened foliage PBR normal/detail and vegetation color lift at night to prevent blue speckled leaf/grass artifacts.
 
 ### 0.1.16
 

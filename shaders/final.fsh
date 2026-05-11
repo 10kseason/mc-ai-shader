@@ -85,9 +85,6 @@ varying vec2 texcoord;
 #define LDR_HIGHLIGHT_DETAIL 0.76 // [0.00 0.30 0.52 0.76 0.90 1.00]
 #define LDR_LOCAL_DETAIL 0.18 // [0.00 0.08 0.14 0.18 0.26 0.38]
 #define LDR_BLACK_FLOOR 0.0004 // [0.0000 0.0002 0.0004 0.0008 0.0012]
-#define HDR_EXPOSURE 0.96
-#define HDR_WHITE_POINT 1.85
-#define HDR_COLOR_PRESERVE 0.78
 #define MATERIAL_SPECULAR_STRENGTH 0.30 // [0.00 0.12 0.22 0.30 0.42 0.56]
 #define MATERIAL_SURFACE_CONTRAST 0.24 // [0.00 0.10 0.18 0.24 0.34 0.46]
 #define MATERIAL_EMISSIVE_GLOW 0.34 // [0.00 0.12 0.22 0.34 0.48 0.66]
@@ -198,46 +195,21 @@ float applyLdrPrecisionCurve(float value) {
     return clamp(t, 0.0, 1.0);
 }
 
-float applyHdrLuminanceShoulder(float value) {
-    float x = max(value, 0.0);
-    float whitePoint = max(HDR_WHITE_POINT, 1.0);
-    float reinhardWhite = (x * (1.0 + x / (whitePoint * whitePoint))) / (1.0 + x);
-    float acesLum = luma(acesTonemap(vec3(x)));
-    return clamp(mix(reinhardWhite, acesLum, ACES_TONEMAP_STRENGTH * 0.26), 0.0, 1.0);
-}
-
-vec3 applyColorPreservingHdrTone(vec3 color) {
-    color = max(color, vec3(0.0));
-    float sourceLum = max(luma(color), 0.000001);
-    float mappedLum = applyHdrLuminanceShoulder(sourceLum);
-    vec3 chroma = color / sourceLum;
-
-    float hotMask = smoothstep(0.82, HDR_WHITE_POINT, sourceLum);
-    float compression = clamp((sourceLum - mappedLum) / max(sourceLum, 0.000001), 0.0, 1.0);
-    float chromaRelax = compression * hotMask * (1.0 - HDR_COLOR_PRESERVE) * 0.52;
-    chroma = mix(chroma, vec3(luma(chroma)), chromaRelax);
-
-    vec3 mapped = chroma * mappedLum;
-    float channelMax = max3(mapped);
-    mapped *= mix(1.0, 1.0 / max(channelMax, 0.000001), smoothstep(1.0, 1.28, channelMax));
-    return mapped;
-}
-
 vec3 applyPrecisionLdrTone(vec3 color, vec2 uv, float depth, float waterMask) {
-    color = max(color, vec3(0.0)) * HDR_EXPOSURE;
+    color = clamp(color, 0.0, 1.0);
     float lum = max(luma(color), 0.000001);
 
-    vec3 localAverage = max(sampleLocalAverage(uv), vec3(0.0)) * HDR_EXPOSURE;
+    vec3 localAverage = clamp(sampleLocalAverage(uv), 0.0, 1.0);
     float localLum = max(luma(localAverage), 0.000001);
     float localContrast = clamp((lum - localLum) / (localLum + 0.045), -1.0, 1.0);
     float sceneMask = 1.0 - step(0.999999, depth);
-    float detailGuard = smoothstep(LDR_BLACK_FLOOR, 0.24, min(lum, 1.0)) * (1.0 - smoothstep(0.92, HDR_WHITE_POINT, lum));
+    float detailGuard = smoothstep(LDR_BLACK_FLOOR, 0.18, lum) * (1.0 - smoothstep(0.74, 1.0, lum));
     detailGuard *= sceneMask * mix(1.0, 0.70, waterMask);
     color *= max(0.0, 1.0 + localContrast * LDR_LOCAL_DETAIL * detailGuard);
-    color = applyColorPreservingHdrTone(color);
+    color = clamp(color, 0.0, 1.0);
 
     lum = max(luma(color), 0.000001);
-    float mappedLum = mix(lum, applyLdrPrecisionCurve(lum), 0.72);
+    float mappedLum = applyLdrPrecisionCurve(lum);
     vec3 chroma = color / lum;
     float highlightDesat = smoothstep(0.82, 1.0, mappedLum) * (1.0 - LDR_HIGHLIGHT_DETAIL * 0.30);
     chroma = mix(chroma, vec3(luma(chroma)), highlightDesat * 0.18);
@@ -281,11 +253,13 @@ float getVegetationMask(vec3 color) {
 
 vec3 applyVegetationColorLift(vec3 color) {
     float brightness = luma(color);
-    float vegetation = getVegetationMask(color) * vegetationBoost;
+    float night = getNightExposureMask();
+    float vegetation = getVegetationMask(color) * vegetationBoost * (1.0 - night * 0.68);
     float shadowMask = 1.0 - smoothstep(0.16, 0.52, brightness);
     float highlightMask = smoothstep(0.40, 0.92, brightness);
 
     vec3 blueGreenShadow = vec3(brightness * 0.48, brightness * 0.84, brightness * 0.80);
+    blueGreenShadow = mix(blueGreenShadow, vec3(brightness * 0.42, brightness * 0.62, brightness * 0.54), night);
     vec3 yellowLift = vec3(brightness * 1.08, brightness * 1.18, brightness * 0.70);
     vec3 cyanLift = vec3(brightness * 0.58, brightness * 1.16, brightness * 1.08);
     vec3 brightHue = mix(yellowLift, cyanLift, smoothstep(0.52, 0.88, brightness));
@@ -474,11 +448,8 @@ vec3 applyPremiumImagePipeline(vec3 color, vec2 uv, float depth, float waterMask
     color = mix(color, colorDepth, PREMIUM_IMAGE_STRENGTH);
 
     vec3 aces = acesTonemap(color * (1.0 + PREMIUM_IMAGE_STRENGTH * 0.10));
-    float acesSourceLum = max(luma(color), 0.000001);
-    vec3 acesLumPreserve = color * (luma(aces) / acesSourceLum);
-    aces = mix(aces, acesLumPreserve, HDR_COLOR_PRESERVE * 0.72);
     float rolloffMask = smoothstep(0.68, 1.32, max3(color));
-    color = mix(color, aces, ACES_TONEMAP_STRENGTH * (0.22 + rolloffMask * HIGHLIGHT_ROLLOFF_STRENGTH * 0.72));
+    color = mix(color, aces, ACES_TONEMAP_STRENGTH * (0.34 + rolloffMask * HIGHLIGHT_ROLLOFF_STRENGTH));
 
     vec3 polishedGlow = saturateColor(bloomColor, 1.04) * vec3(0.92, 0.98, 1.08);
     color += polishedGlow * PREMIUM_IMAGE_STRENGTH * 0.045 * (1.0 - rain * 0.34 + waterMask * 0.18);
