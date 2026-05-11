@@ -33,5 +33,5 @@ void main() {
     vec3 base = texture2D(colortex6, texcoord).rgb;
     vec3 wide = upsampleWide(texcoord);
     vec3 bloom = base * 0.72 + wide * 0.68;
-    gl_FragData[0] = vec4(clamp(bloom, 0.0, 1.0), 1.0);
+    gl_FragData[0] = vec4(clamp(bloom, 0.0, 4.0), 1.0);
 }

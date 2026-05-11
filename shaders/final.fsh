@@ -85,6 +85,9 @@ varying vec2 texcoord;
 #define LDR_HIGHLIGHT_DETAIL 0.76 // [0.00 0.30 0.52 0.76 0.90 1.00]
 #define LDR_LOCAL_DETAIL 0.18 // [0.00 0.08 0.14 0.18 0.26 0.38]
 #define LDR_BLACK_FLOOR 0.0004 // [0.0000 0.0002 0.0004 0.0008 0.0012]
+#define HDR_EXPOSURE 0.96
+#define HDR_WHITE_POINT 1.85
+#define HDR_COLOR_PRESERVE 0.78
 #define MATERIAL_SPECULAR_STRENGTH 0.30 // [0.00 0.12 0.22 0.30 0.42 0.56]
 #define MATERIAL_SURFACE_CONTRAST 0.24 // [0.00 0.10 0.18 0.24 0.34 0.46]
 #define MATERIAL_EMISSIVE_GLOW 0.34 // [0.00 0.12 0.22 0.34 0.48 0.66]
@@ -195,21 +198,46 @@ float applyLdrPrecisionCurve(float value) {
     return clamp(t, 0.0, 1.0);
 }
 
+float applyHdrLuminanceShoulder(float value) {
+    float x = max(value, 0.0);
+    float whitePoint = max(HDR_WHITE_POINT, 1.0);
+    float reinhardWhite = (x * (1.0 + x / (whitePoint * whitePoint))) / (1.0 + x);
+    float acesLum = luma(acesTonemap(vec3(x)));
+    return clamp(mix(reinhardWhite, acesLum, ACES_TONEMAP_STRENGTH * 0.26), 0.0, 1.0);
+}
+
+vec3 applyColorPreservingHdrTone(vec3 color) {
+    color = max(color, vec3(0.0));
+    float sourceLum = max(luma(color), 0.000001);
+    float mappedLum = applyHdrLuminanceShoulder(sourceLum);
+    vec3 chroma = color / sourceLum;
+
+    float hotMask = smoothstep(0.82, HDR_WHITE_POINT, sourceLum);
+    float compression = clamp((sourceLum - mappedLum) / max(sourceLum, 0.000001), 0.0, 1.0);
+    float chromaRelax = compression * hotMask * (1.0 - HDR_COLOR_PRESERVE) * 0.52;
+    chroma = mix(chroma, vec3(luma(chroma)), chromaRelax);
+
+    vec3 mapped = chroma * mappedLum;
+    float channelMax = max3(mapped);
+    mapped *= mix(1.0, 1.0 / max(channelMax, 0.000001), smoothstep(1.0, 1.28, channelMax));
+    return mapped;
+}
+
 vec3 applyPrecisionLdrTone(vec3 color, vec2 uv, float depth, float waterMask) {
-    color = clamp(color, 0.0, 1.0);
+    color = max(color, vec3(0.0)) * HDR_EXPOSURE;
     float lum = max(luma(color), 0.000001);
 
-    vec3 localAverage = clamp(sampleLocalAverage(uv), 0.0, 1.0);
+    vec3 localAverage = max(sampleLocalAverage(uv), vec3(0.0)) * HDR_EXPOSURE;
     float localLum = max(luma(localAverage), 0.000001);
     float localContrast = clamp((lum - localLum) / (localLum + 0.045), -1.0, 1.0);
     float sceneMask = 1.0 - step(0.999999, depth);
-    float detailGuard = smoothstep(LDR_BLACK_FLOOR, 0.18, lum) * (1.0 - smoothstep(0.74, 1.0, lum));
+    float detailGuard = smoothstep(LDR_BLACK_FLOOR, 0.24, min(lum, 1.0)) * (1.0 - smoothstep(0.92, HDR_WHITE_POINT, lum));
     detailGuard *= sceneMask * mix(1.0, 0.70, waterMask);
     color *= max(0.0, 1.0 + localContrast * LDR_LOCAL_DETAIL * detailGuard);
-    color = clamp(color, 0.0, 1.0);
+    color = applyColorPreservingHdrTone(color);
 
     lum = max(luma(color), 0.000001);
-    float mappedLum = applyLdrPrecisionCurve(lum);
+    float mappedLum = mix(lum, applyLdrPrecisionCurve(lum), 0.72);
     vec3 chroma = color / lum;
     float highlightDesat = smoothstep(0.82, 1.0, mappedLum) * (1.0 - LDR_HIGHLIGHT_DETAIL * 0.30);
     chroma = mix(chroma, vec3(luma(chroma)), highlightDesat * 0.18);
@@ -446,8 +474,11 @@ vec3 applyPremiumImagePipeline(vec3 color, vec2 uv, float depth, float waterMask
     color = mix(color, colorDepth, PREMIUM_IMAGE_STRENGTH);
 
     vec3 aces = acesTonemap(color * (1.0 + PREMIUM_IMAGE_STRENGTH * 0.10));
+    float acesSourceLum = max(luma(color), 0.000001);
+    vec3 acesLumPreserve = color * (luma(aces) / acesSourceLum);
+    aces = mix(aces, acesLumPreserve, HDR_COLOR_PRESERVE * 0.72);
     float rolloffMask = smoothstep(0.68, 1.32, max3(color));
-    color = mix(color, aces, ACES_TONEMAP_STRENGTH * (0.34 + rolloffMask * HIGHLIGHT_ROLLOFF_STRENGTH));
+    color = mix(color, aces, ACES_TONEMAP_STRENGTH * (0.22 + rolloffMask * HIGHLIGHT_ROLLOFF_STRENGTH * 0.72));
 
     vec3 polishedGlow = saturateColor(bloomColor, 1.04) * vec3(0.92, 0.98, 1.08);
     color += polishedGlow * PREMIUM_IMAGE_STRENGTH * 0.045 * (1.0 - rain * 0.34 + waterMask * 0.18);
@@ -551,13 +582,16 @@ vec3 applyResolvedWaterGeometryReflection(vec3 color, vec2 uv, float depth, floa
     float noon = getNoonExposureMask();
     float night = getNightExposureMask();
     float rain = getRainMood();
+    float edgeFade = smoothstep(0.00, 0.08, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
     float alpha = clamp(reflection.a * WATER_GEOMETRY_REFLECTION_FINAL_STRENGTH, 0.0, 0.86);
     alpha *= 1.0 - noon * 0.08;
-    alpha *= 1.0 - rain * 0.12;
+    alpha *= 1.0 - rain * 0.18;
     alpha *= 0.84 + night * 0.12;
+    alpha *= 0.76 + edgeFade * 0.24;
 
     vec3 reflected = clamp(reflection.rgb * vec3(0.82, 0.94, 1.08), 0.0, 1.0);
     reflected = mix(vec3(luma(reflected)) * vec3(0.72, 0.86, 1.08), reflected, 0.78);
+    reflected = mix(reflected, reflected * vec3(0.68, 0.80, 1.10), rain * 0.16 + night * 0.12);
     vec3 lifted = max(color * (0.96 - alpha * 0.06), reflected);
     vec3 blended = mix(color, lifted, alpha * 0.82);
     blended += reflected * alpha * (0.030 + night * 0.020);
@@ -693,6 +727,21 @@ float getExplicitGlassMaterial(vec4 material, vec4 extra, float waterMask) {
     return clamp(marker * smoothSurface * sealedSurface * nonMetal * (1.0 - waterMask), 0.0, 1.0);
 }
 
+float getExplicitMetalMaterial(vec4 material, vec4 extra, float waterMask) {
+    float marker = smoothstep(0.82, 0.86, extra.b) * (1.0 - smoothstep(0.90, 0.94, extra.b));
+    float conductive = smoothstep(0.58, 0.78, extra.r);
+    float smoothSurface = smoothstep(0.58, 0.88, material.g);
+    float sealedSurface = 1.0 - smoothstep(0.04, 0.22, material.a);
+    return clamp(marker * max(conductive, smoothSurface * 0.72) * sealedSurface * (1.0 - waterMask), 0.0, 1.0);
+}
+
+float getExplicitStoneMaterial(vec4 material, vec4 extra, float waterMask) {
+    float marker = smoothstep(0.54, 0.58, extra.b) * (1.0 - smoothstep(0.62, 0.66, extra.b));
+    float roughSurface = 1.0 - smoothstep(0.42, 0.72, material.g);
+    float porousSurface = smoothstep(0.28, 0.58, material.a);
+    return clamp(marker * max(roughSurface, porousSurface * 0.82) * (1.0 - waterMask), 0.0, 1.0);
+}
+
 float getPbrAwareFresnel(vec2 uv, float depth, float waterMask) {
     float screenFresnel = getScreenSpaceFresnel(uv, depth);
     vec4 normalData = texture2D(colortex2, uv);
@@ -719,20 +768,24 @@ vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float water
     float reflectance = clamp(pbrExtra.r, 0.0, 1.0);
     float pbrPresence = clamp(pbrExtra.b, 0.0, 1.0) * (1.0 - waterMask);
     float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
+    float metalMaterial = getExplicitMetalMaterial(material, pbrExtra, waterMask);
+    float stoneMaterial = getExplicitStoneMaterial(material, pbrExtra, waterMask);
     float saturation = colorSaturation(color);
     float intensity = max3(color);
     float neutralSurface = 1.0 - smoothstep(0.16, 0.54, saturation);
     float highReflectance = smoothstep(0.22, 0.78, reflectance) * (0.45 + pbrPresence * 0.55);
     float fallbackMetal = smoothstep(0.52, 0.90, smoothness) * neutralSurface * smoothstep(0.18, 0.72, intensity) * (1.0 - pbrPresence);
-    float metalMask = max(smoothstep(0.26, 0.82, smoothness) * highReflectance * neutralSurface,
-                          fallbackMetal * 0.42) * METAL_REFLECTION_STRENGTH;
-    metalMask *= 1.0 - glassMaterial;
+    float metalMask = max(max(smoothstep(0.26, 0.82, smoothness) * highReflectance * neutralSurface,
+                              fallbackMetal * 0.42),
+                          metalMaterial * (0.68 + smoothness * 0.32)) * METAL_REFLECTION_STRENGTH;
+    metalMask *= (1.0 - glassMaterial) * (1.0 - stoneMaterial * 0.86);
     float highlightSpec = smoothstep(0.48, 0.96, intensity) * smoothstep(0.08, 0.42, saturation);
     highlightSpec = max(highlightSpec, smoothness * (0.16 + fresnel * 0.72));
     float noon = getNoonExposureMask();
     float waterGlass = waterMask * mix(0.72, 0.24, noon);
     float explicitGlassMask = glassMaterial * (0.52 + fresnel * 0.92);
     float inferredGlassMask = highlightSpec * (0.20 + fresnel * 1.42) * (1.0 - glassMaterial * 0.35);
+    inferredGlassMask *= (1.0 - metalMaterial * 0.60) * (1.0 - stoneMaterial * 0.72);
     float glassMask = clamp(max(waterGlass, max(explicitGlassMask, inferredGlassMask)), 0.0, 1.0);
     float reflectiveMask = clamp(max(glassMask * glassReflectionStrength, metalMask * (0.62 + fresnel * 0.72)), 0.0, 1.0);
 
@@ -753,6 +806,7 @@ vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float water
     vec3 steelReflection = mix(reflection, vec3(luma(reflection)) * vec3(0.82, 0.96, 1.15), metalMask);
     vec3 neonReflection = mix(cyanTint, magentaTint, smoothstep(0.35, 0.95, color.r + color.b - color.g));
     neonReflection = mix(neonReflection, max(neonReflection, steelReflection), metalMask * 0.58);
+    neonReflection = mix(neonReflection, vec3(luma(reflection)) * vec3(0.70, 0.76, 0.84), stoneMaterial * 0.70);
     vec3 realisticReflection = mix(reflection, vec3(luma(reflection)) * vec3(0.90, 0.98, 1.07), 0.42 + fresnel * 0.22);
     neonReflection = mix(neonReflection, realisticReflection, glassMaterial);
 
@@ -786,6 +840,8 @@ vec3 applyMaterialFinish(vec3 color, vec2 uv, float depth, float waterMask, vec3
     float pbrPresence = clamp(pbrExtra.b, 0.0, 1.0) * (1.0 - waterMask);
     float upward = clamp(pbrExtra.a, 0.0, 1.0) * (1.0 - waterMask);
     float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
+    float metalMaterial = getExplicitMetalMaterial(material, pbrExtra, waterMask);
+    float stoneMaterial = getExplicitStoneMaterial(material, pbrExtra, waterMask);
     float rain = getRainMood();
 
     if (smoothness <= 0.001 && emission <= 0.001 && rain <= 0.001) {
@@ -799,13 +855,19 @@ vec3 applyMaterialFinish(vec3 color, vec2 uv, float depth, float waterMask, vec3
     vec3 polished = applyContrast(color, 1.0 + smoothness * MATERIAL_SURFACE_CONTRAST * 0.56);
     polished = mix(polished, sqrt(clamp(polished, 0.0, 1.0)), roughness * MATERIAL_SURFACE_CONTRAST * (0.12 + porosity * 0.22));
     polished = mix(polished, color * vec3(0.94, 1.00, 1.035) + bloomColor * 0.040, glassMaterial * 0.62);
+    polished = mix(polished, polished * vec3(0.92, 0.94, 0.98), stoneMaterial * (0.16 + porosity * 0.18));
 
     vec3 sheenTint = saturateColor(max(bloomColor, color * 0.32), 1.0 + smoothness * 0.18);
     float reflectanceBoost = mix(0.70, 1.88, reflectance) * (1.0 + pbrPresence * PBR_FINAL_REFLECTANCE_GAIN);
+    reflectanceBoost = mix(reflectanceBoost, reflectanceBoost * 0.42, stoneMaterial);
+    reflectanceBoost = mix(reflectanceBoost, max(reflectanceBoost, 1.92), metalMaterial);
     float sheen = smoothness * (0.18 + fresnel * 1.20) * MATERIAL_SPECULAR_STRENGTH * reflectanceBoost;
     sheen = mix(sheen, smoothness * (0.08 + fresnel * 1.05) * MATERIAL_SPECULAR_STRENGTH, glassMaterial);
+    sheen = mix(sheen, sheen * 0.38, stoneMaterial);
+    sheen = max(sheen, metalMaterial * METAL_REFLECTION_STRENGTH * (0.12 + fresnel * 0.86));
     sheen += rain * upward * (1.0 - porosity * 0.58) * (0.08 + fresnel * 0.62) * MATERIAL_FRESNEL_POLISH;
     sheen *= 1.0 - glassMaterial * rain * 0.55;
+    sheen *= 1.0 - stoneMaterial * rain * 0.20;
     polished = mix(polished, max(polished, sheenTint), clamp(sheen, 0.0, 0.62));
 
     vec3 warmEmission = max(color, vec3(brightness) * vec3(1.22, 0.92, 0.58));

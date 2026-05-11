@@ -11,6 +11,8 @@ varying vec3 gbViewDirTangent;
 varying float gbVegetationMask;
 varying float gbIceMask;
 varying float gbGlassMask;
+varying float gbMetalMask;
+varying float gbStoneMask;
 
 attribute vec4 at_tangent;
 attribute vec4 mc_Entity;
@@ -30,6 +32,8 @@ void main() {
     gbVegetationMask = getVertexVegetationMask(gl_Color, objectNormal);
     gbIceMask = 1.0 - step(0.5, abs(mc_Entity.x - 10001.0));
     gbGlassMask = 1.0 - step(0.5, abs(mc_Entity.x - 10003.0));
+    gbMetalMask = 1.0 - step(0.5, abs(mc_Entity.x - 10005.0));
+    gbStoneMask = 1.0 - step(0.5, abs(mc_Entity.x - 10007.0));
 
     vec4 viewPosition = gl_ModelViewMatrix * vertex;
     gl_Position = gl_ProjectionMatrix * viewPosition;

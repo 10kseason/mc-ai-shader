@@ -19,6 +19,8 @@ varying vec3 gbViewDirTangent;
 varying float gbVegetationMask;
 varying float gbIceMask;
 varying float gbGlassMask;
+varying float gbMetalMask;
+varying float gbStoneMask;
 
 #define PBR_ALBEDO_AO_STRENGTH 0.70 // [0.00 0.30 0.50 0.70 0.90 1.00]
 #define LEAF_COLOR_BOOST 0.24 // [0.00 0.10 0.18 0.24 0.34 0.46]
@@ -148,16 +150,19 @@ vec3 applyLabPbrBumpShading(vec3 color, vec4 baseColor, vec4 normalData, vec4 sp
 
     float glass = clamp(gbGlassMask, 0.0, 1.0);
     float ice = clamp(gbIceMask, 0.0, 1.0);
+    float explicitMetal = clamp(gbMetalMask, 0.0, 1.0) * (1.0 - glass);
+    float explicitStone = clamp(gbStoneMask, 0.0, 1.0) * (1.0 - glass) * (1.0 - ice);
     float smoothness = clamp(specData.r, 0.0, 1.0);
     float reflectance = clamp(specData.g, 0.0, 1.0);
     float metalLike = smoothstep(0.70, 0.92, reflectance) * smoothstep(0.42, 0.86, smoothness);
-    float materialMask = (1.0 - glass) * (1.0 - ice * 0.58) * (1.0 - metalLike * 0.55);
+    metalLike = max(metalLike, explicitMetal);
+    float materialMask = (1.0 - glass) * (1.0 - ice * 0.58) * (1.0 - metalLike * 0.62);
 
     vec2 bumpVector = normalData.rg * 2.0 - 1.0;
     float bumpEnergy = smoothstep(0.015, 0.42, length(bumpVector));
     float heightRelief = clamp(normalData.a - 0.5, -0.16, 0.16);
     float heightEnergy = smoothstep(0.006, 0.055, abs(heightRelief));
-    float detailMask = clamp(max(bumpEnergy, heightEnergy) * materialMask, 0.0, 1.0);
+    float detailMask = clamp(max(bumpEnergy, heightEnergy) * materialMask * mix(1.0, 1.22, explicitStone), 0.0, 1.0);
     if (detailMask <= 0.001) {
         return color;
     }
@@ -187,6 +192,9 @@ vec4 encodeMaterialMask(vec4 baseColor, vec3 litColor, vec4 normalData, vec4 spe
     float glassLikeAlpha = (1.0 - smoothstep(0.72, 0.99, baseColor.a)) * smoothstep(0.08, 0.42, baseColor.a);
     float smoothness = clamp(polishedSurface * 0.42 + glassLikeAlpha * 0.74, 0.0, 1.0);
     float glass = clamp(gbGlassMask, 0.0, 1.0);
+    float ice = clamp(gbIceMask, 0.0, 1.0);
+    float explicitMetal = clamp(gbMetalMask, 0.0, 1.0) * (1.0 - glass);
+    float explicitStone = clamp(gbStoneMask, 0.0, 1.0) * (1.0 - glass) * (1.0 - ice);
 
     float rawBlockLight = clamp(gbLightCoord.x, 0.0, 1.0);
     float blockLight = smoothstep(0.62, 0.98, rawBlockLight);
@@ -204,7 +212,10 @@ vec4 encodeMaterialMask(vec4 baseColor, vec3 litColor, vec4 normalData, vec4 spe
     float porosity = 0.18 * neutralSurface;
 #endif
 
-    float ice = clamp(gbIceMask, 0.0, 1.0);
+    smoothness = mix(smoothness, min(smoothness, 0.34), explicitStone);
+    smoothness = mix(smoothness, max(smoothness, 0.82), explicitMetal);
+    porosity = mix(porosity, max(porosity, 0.46), explicitStone);
+    porosity = mix(porosity, 0.00, explicitMetal);
     smoothness = mix(smoothness, max(smoothness, 0.76), ice);
     smoothness = mix(smoothness, max(smoothness, 0.84), glass);
     porosity = mix(porosity, 0.02, ice);
@@ -217,8 +228,10 @@ vec4 encodeMaterialMask(vec4 baseColor, vec3 litColor, vec4 normalData, vec4 spe
 
 vec4 encodePbrNormalTarget(vec4 normalData) {
     float glass = clamp(gbGlassMask, 0.0, 1.0);
+    float metal = clamp(gbMetalMask, 0.0, 1.0) * (1.0 - glass);
 #ifdef MC_TEXTURE_FORMAT_LAB_PBR
     vec3 viewNormal = decodeLabPbrViewNormal(normalData);
+    viewNormal = normalize(mix(viewNormal, normalize(gbViewNormal), metal * 0.46));
     viewNormal = normalize(mix(viewNormal, normalize(gbViewNormal), glass * 0.68));
     float ao = mix(clamp(normalData.b, 0.0, 1.0), 0.98, glass);
     return vec4(viewNormal * 0.5 + 0.5, ao);
@@ -231,21 +244,38 @@ vec4 encodePbrExtraTarget(vec4 normalData, vec4 specData) {
     float upward = smoothstep(0.18, 0.86, normalize(gbNormal).y);
     float ice = clamp(gbIceMask, 0.0, 1.0);
     float glass = clamp(gbGlassMask, 0.0, 1.0);
+    float metal = clamp(gbMetalMask, 0.0, 1.0) * (1.0 - glass);
+    float stone = clamp(gbStoneMask, 0.0, 1.0) * (1.0 - glass) * (1.0 - ice);
 #ifdef MC_TEXTURE_FORMAT_LAB_PBR
     float reflectance = clamp(specData.g, 0.0, 1.0);
     float height = clamp(normalData.a, 0.0, 1.0);
+    reflectance = mix(reflectance, min(reflectance, 0.26), stone);
+    reflectance = mix(reflectance, max(reflectance, 0.78), metal);
     reflectance = mix(reflectance, max(reflectance, 0.44), ice);
     reflectance = mix(reflectance, 0.18, glass);
+    height = mix(height, mix(0.58, height, 0.80), stone);
+    height = mix(height, mix(0.50, height, 0.28), metal);
     height = mix(height, mix(0.52, height, 0.35), ice);
     height = mix(height, 0.50, glass);
-    float pbrMarker = mix(1.0, 0.72, glass);
+    float pbrMarker = 1.0;
+    pbrMarker = mix(pbrMarker, 0.58, stone);
+    pbrMarker = mix(pbrMarker, 0.86, metal);
+    pbrMarker = mix(pbrMarker, 0.72, glass);
     return vec4(reflectance, height, pbrMarker, upward);
 #else
-    float reflectance = mix(0.10, 0.58, ice);
-    float height = mix(0.5, 0.64, ice);
+    float reflectance = mix(0.10, 0.22, stone);
+    reflectance = mix(reflectance, 0.78, metal);
+    reflectance = mix(reflectance, 0.58, ice);
+    float height = mix(0.5, 0.60, stone);
+    height = mix(height, 0.50, metal);
+    height = mix(height, 0.64, ice);
     reflectance = mix(reflectance, 0.18, glass);
     height = mix(height, 0.50, glass);
-    return vec4(reflectance, height, glass * 0.72, upward);
+    float marker = 0.0;
+    marker = mix(marker, 0.58, stone);
+    marker = mix(marker, 0.86, metal);
+    marker = mix(marker, 0.72, glass);
+    return vec4(reflectance, height, marker, upward);
 #endif
 }
 

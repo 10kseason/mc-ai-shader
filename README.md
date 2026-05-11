@@ -10,7 +10,7 @@ This project is intentionally separate from the server-side Fabric optimizer cod
 
 ## Version
 
-Current release: `0.1.13` for Minecraft Java `1.20.1`.
+Current release: `0.1.16` for Minecraft Java `1.20.1`.
 
 ## Preview
 
@@ -53,17 +53,19 @@ In-game Iris test captures from the current shaderpack build:
 - Noon water no longer crushes midtones: daylight highlight rolloff now affects only bright glints, and `WATER_NOON_VISIBILITY_FLOOR` keeps deep water readable blue instead of black.
 - Water color now moves by depth: shallow water trends cyan-white, deep water trends cyan-blue.
 - Water now adds a directional sun path, shallow sand-color return, and weak near-shore caustic shimmer so highlights cluster toward the real sun direction instead of spreading evenly over the whole surface.
+- Water sparkle now respects direct shadowing: shadowed water keeps its base depth/color but loses most sun-path glint and caustic shimmer.
 - Fog now blends sky and water color instead of leaning into a flat gray wall; volumetric fog density/blue tint are restrained by default to avoid the washed-out blue-gray look seen in distant rainy or ocean views.
 - Rain and overcast now feed an extra wet-weather volumetric scatter path through `WEATHER_VOLUME_SCATTER`, increasing low horizon mist and sun-tinted fog before the view collapses into a flat gray wall.
 - Horizon blending has a dedicated water-sky mist pass to soften the flat gray render-boundary band where distant water, fog, and sky meet.
 - Vanilla cloud geometry now writes a cloud marker into the material buffer, allowing the composite pass to add density variation, inner shadow, and sun-behind-cloud scattering without changing world geometry.
 - Glass blocks and panes now use an explicit material id with dry pane-like smoothness, low porosity, restrained reflectance, subtle surface grain, neutral edge lift, and reduced reflection blur so they do not read like water.
+- Metal and stone-family blocks now use explicit material ids: metal receives a steadier conductive reflection path with damped normal wobble, while stone stays rougher, more porous, and less mirror-like even when a PBR pack is present.
 - High-reflectance metal surfaces still use PBR smoothness/reflectance plus Fresnel, but cyan/magenta reflection split is reduced on glass-specific pixels.
 - Generated vanilla PBR maps from `vanilla-pbr-map-maker/dist/Vanilla-PBR-Generated.zip` are now treated conservatively: glass is kept dry and nearly flat, ice height stays near neutral, metal normal detail is damped, stone smoothness stays rougher, and bump height shading is restrained by default.
 - Leaf-tinted terrain gets a stronger natural green response without vertex sway, keeping grass and foliage stable while standing still.
 - Leaf-like terrain now receives a controlled backlight/subsurface response through `LEAF_SSS_STRENGTH`, using material color and normal cues so foliage can glow against sun direction without requiring vertex motion.
-- The main scene and bloom buffers now stay in a precise `0..1` LDR range with 16-bit normalized color targets instead of carrying overbright HDR values.
-- The final pass uses an LDR precision curve for shadow toe, highlight shoulder, low-black-floor detail, and local contrast preservation without 20-stop HDR compression.
+- The main scene and bloom buffers now keep HDR headroom in half-float color targets, then apply a restrained final shoulder instead of clipping bright values early.
+- The final pass uses luminance-preserving HDR tone mapping before the LDR precision curve, so overall color ratios and brightness survive highlight rolloff better.
 - Default final color grading now favors physically plausible exposure over stylized filters: pastel wash, BF3-style blue grading, heavy rain gray-blue tint, and over-bright middle-gray mapping are reduced or disabled by default.
 - Sunlight tint keeps its brightness but defaults to 35% lower daylight saturation through `SUNLIGHT_SATURATION`, reducing over-yellow sand, cloud scatter, and water glints.
 - Adds color grading, contrast, vignette, and underwater tint handling.
@@ -80,13 +82,13 @@ In-game Iris test captures from the current shaderpack build:
 - Adds a `Debug View` shader setting for isolating shadow-only, SSAO-only, RT-local-only, water-mask, material-class, smoothness/roughness/glass, reflectance/height/PBR, block-light/emissive/porosity, normal/AO, glass/up/water, and bump-detail outputs.
 - Stabilizes block-edge shadows by softening shadow-map sampling, reducing screen-space RT local shadow strength, and removing vegetation vertex wind movement.
 - Current RT limitation: visible emissive sources use screen-space tracing, while the block-light fallback is a stable light-field approximation rather than a full voxel light list.
-- Current water reflection limitation: the new reflection texture is a half-resolution Iris pass for visible reflected geometry. It is still bounded by screen/depth-buffer visibility, not a full second mirrored world render, which keeps performance closer to this lab pack's current budget.
+- Current water reflection limitation: the new reflection texture is a half-resolution Iris pass for visible reflected geometry. It is still bounded by screen/depth-buffer visibility, not a full second mirrored world render, which keeps performance closer to this lab pack's current budget. Shallow/deep fade, edge fade, rain damping, and night tint are tuned to hide the most obvious screen-space failure cases.
 - Keeps the shader simple enough to debug with Iris shader reload.
 
 ## Install
 
 1. Run `package_shaderpack.bat`.
-2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.13-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
+2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.16-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
 3. Enable it from Iris or OptiFine shader settings.
 
 The packaging script also refreshes `dist/Client-GLSL-Shaderpack-Lab-1.20.1.zip` as a stable comparison alias.
@@ -109,6 +111,24 @@ Suggested test loop:
 4. If you touch an individual slider after selecting a profile, Iris may show `Custom`; reselect the profile to return to the preset.
 
 ## Changelog
+
+### 0.1.16
+
+- Changed the main scene and bloom buffers to half-float targets and raised scene white headroom so bright sun, glass, foliage, water, and bloom energy are not hard-clipped before the final pass.
+- Added luminance-preserving HDR tone mapping in `final.fsh`, mixing a restrained white-point shoulder with the existing precision curve to protect color and brightness while still controlling highlights.
+- Updated shader profiles so `low`, `balanced`, and `cinematic` keep consistent HDR headroom instead of falling back to the previous `1.0` scene clamp.
+
+### 0.1.15
+
+- Connected shadow-map visibility to the water reflection shader so shadowed water reduces sun-path sparkle, bright-wave glints, and near-shore caustic shimmer.
+- Added a subtle cool darkening on shadowed water while preserving depth absorption and refraction readability.
+
+### 0.1.14
+
+- Added explicit metal and stone block material ids, then propagated those hints through the material buffer.
+- Split material response further: metal gets sharper conductive reflections with reduced normal wobble, stone gets rougher porous shading with weaker mirror response, and glass/ice keep their existing separate paths.
+- Refined water reflections with stronger shallow/deep gating, screen-edge fade, rain damping, and night color damping across the main water pass, reflected-geometry pass, and final blend.
+- Updated the material debug label so the class view can distinguish the new metal/stone path during Iris testing.
 
 ### 0.1.13
 
