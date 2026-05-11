@@ -33,5 +33,5 @@ void main() {
     vec3 base = texture2D(colortex5, texcoord).rgb;
     vec3 mid = upsampleMid(texcoord);
     vec3 bloom = base * 0.58 + mid * 0.82;
-    gl_FragData[0] = vec4(clamp(bloom, 0.0, 4.0), 1.0);
+    gl_FragData[0] = vec4(clamp(bloom, 0.0, 1.0), 1.0);
 }

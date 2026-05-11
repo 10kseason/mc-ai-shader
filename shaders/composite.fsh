@@ -2,7 +2,7 @@
 
 /* DRAWBUFFERS:0 */
 /*
-const int colortex0Format = RGBA16F;
+const int colortex0Format = RGBA16;
 const int colortex1Format = RGBA16;
 const int colortex2Format = RGBA16;
 const int colortex3Format = RGBA16;
@@ -53,7 +53,7 @@ varying vec2 texcoord;
 #define SUNSET_WARMTH 0.78 // [0.00 0.35 0.55 0.78 0.95 1.15]
 #define MOONLIGHT_TINT_STRENGTH 0.34 // [0.00 0.14 0.24 0.34 0.48 0.64]
 #define TIME_LIGHT_EXPOSURE 1.00 // [0.82 0.92 1.00 1.08 1.16]
-#define LDR_SCENE_WHITE 1.60 // [0.96 1.00 1.25 1.60 2.00 2.50]
+#define LDR_SCENE_WHITE 1.00 // [0.92 0.96 1.00]
 #define WATER_REFLECTION_STRENGTH 0.92 // [0.00 0.20 0.34 0.58 0.70 0.76 0.92]
 #define WATER_SURFACE_BRIGHTNESS 0.70 // [0.65 0.70 0.72 0.76 0.80]
 #define WATER_SUNSET_TINT 0.72 // [0.00 0.35 0.55 0.72 0.92 1.00]
@@ -251,6 +251,17 @@ float getWaterNoonMask() {
     return smoothstep(0.30, 0.96, max(getSunElevationCurve(), 0.0));
 }
 
+float getWaterAmbientVisibility() {
+    float day = getDayVisibility();
+    float sun = getSunPresence();
+    float night = getNightVisibility();
+    float horizon = getHorizonSunWarmth();
+    float twilight = (1.0 - night) * (1.0 - getWaterNoonMask());
+    float ambient = max(day * 0.72 + sun * 0.16, twilight * 0.52 + horizon * 0.22);
+    ambient = mix(ambient, max(ambient, day * 0.48), getRainCloudOcclusion() * 0.38);
+    return clamp(ambient, 0.0, 1.0);
+}
+
 vec3 applyWaterDayHighlightRolloff(vec3 color, float noonMask) {
     float noon = clamp(noonMask, 0.0, 1.0);
     float lum = luminance(color);
@@ -416,6 +427,24 @@ vec3 sampleSoftReflection(vec2 uv, float blur) {
     return reflected;
 }
 
+float getWaterSceneAmbient(vec2 uv, vec3 refractedScene) {
+    vec2 px = vec2(1.0 / viewWidth, 1.0 / viewHeight);
+    vec3 avg = refractedScene * 0.34;
+    avg += texture2D(colortex0, clamp(uv + vec2( px.x * 10.0, 0.0), vec2(0.001), vec2(0.999))).rgb * 0.13;
+    avg += texture2D(colortex0, clamp(uv + vec2(-px.x * 10.0, 0.0), vec2(0.001), vec2(0.999))).rgb * 0.13;
+    avg += texture2D(colortex0, clamp(uv + vec2(0.0,  px.y * 8.0), vec2(0.001), vec2(0.999))).rgb * 0.18;
+    avg += texture2D(colortex0, clamp(uv + vec2(0.0, -px.y * 8.0), vec2(0.001), vec2(0.999))).rgb * 0.12;
+    avg += texture2D(colortex0, clamp(uv + vec2( px.x * 18.0,  px.y * 12.0), vec2(0.001), vec2(0.999))).rgb * 0.05;
+    avg += texture2D(colortex0, clamp(uv + vec2(-px.x * 18.0,  px.y * 12.0), vec2(0.001), vec2(0.999))).rgb * 0.05;
+
+    float sceneLum = clamp(luminance(avg), 0.0, 1.0);
+    float timeAmbient = getWaterAmbientVisibility();
+    float night = getNightVisibility();
+    float sceneLift = smoothstep(0.10, 0.62, sceneLum) * (0.18 + timeAmbient * 0.32);
+    sceneLift *= mix(0.32, 1.0, clamp(timeAmbient + (1.0 - night) * 0.35, 0.0, 1.0));
+    return clamp(timeAmbient + sceneLift, 0.0, 1.0);
+}
+
 vec2 getWorldWaterSlope(vec2 worldXZ) {
     vec2 p = worldXZ * 0.052 * WATER_WAVE_SCALE;
     float t = frameTimeCounter * WATER_WAVE_SPEED;
@@ -517,17 +546,19 @@ vec3 getDynamicWaterEnvironmentReflection(vec3 worldPos, vec3 waterNormal, vec2 
     float rain = getRainAmount();
     float overcast = getRainCloudOcclusion();
     float directSun = getDirectSunTransmission();
+    float ambientDay = getWaterAmbientVisibility();
+    float waterNight = clamp(night * (1.0 - ambientDay * 0.82), 0.0, 1.0);
 
     vec3 daySky = mix(vec3(0.22, 0.46, 0.84), vec3(0.58, 0.76, 0.94), 0.36 + WATER_SUNSET_TINT * 0.12);
     vec3 nightSky = vec3(0.12, 0.18, 0.38);
-    vec3 sky = mix(daySky, nightSky, night * 0.92);
+    vec3 sky = mix(daySky, nightSky, waterNight * 0.92);
     sky = mix(sky, normalizeLightTint(getPhysicalSunColor()) * vec3(0.86, 0.80, 0.70), horizonWarmth * 0.24 * directSun);
     sky = mix(sky, vec3(luminance(sky)) * vec3(0.68, 0.82, 1.08), rain * RAIN_SKY_DESATURATION);
-    sky *= 0.84 + dayDamp * 0.16;
+    sky *= (0.66 + ambientDay * 0.34) * (0.84 + dayDamp * 0.16);
 
     vec3 dayCloud = mix(vec3(0.62, 0.72, 0.88), vec3(0.96, 0.82, 0.62), horizonWarmth * 0.38);
     vec3 nightCloud = vec3(0.28, 0.34, 0.52);
-    vec3 cloud = mix(dayCloud, nightCloud, night);
+    vec3 cloud = mix(dayCloud, nightCloud, waterNight);
     cloud = mix(cloud, getOvercastSkyTint() * vec3(0.56, 0.68, 0.92), overcast * 0.72);
     cloudMask = max(cloudMask, overcast * 0.54);
     vec3 reflected = mix(sky, cloud, cloudMask);
@@ -786,11 +817,21 @@ vec3 getMaterialDebugView(vec2 uv, float waterMask, int mode) {
     return vec3(0.0);
 }
 
+float getFoliageSurfaceMask(vec3 baseColor, vec4 material, float waterMask) {
+    float greenLead = smoothstep(0.02, 0.26, baseColor.g - max(baseColor.r * 0.92, baseColor.b));
+    float naturalSaturation = smoothstep(0.10, 0.46, colorSaturation(baseColor));
+    float visible = smoothstep(0.035, 0.42, luminance(baseColor));
+    float notSmooth = 1.0 - smoothstep(0.52, 0.90, material.g);
+    float porosityAssist = 0.62 + clamp(material.a, 0.0, 1.0) * 0.38;
+    return clamp(greenLead * naturalSaturation * visible * notSmooth * porosityAssist * (1.0 - waterMask), 0.0, 1.0);
+}
+
 vec3 decodeStoredPbrNormal(vec2 uv, float depth, float waterMask) {
     vec3 estimated = estimateViewNormal(uv, depth);
     vec4 normalData = texture2D(colortex2, uv);
     vec4 extra = texture2D(colortex3, uv);
     vec4 material = texture2D(colortex1, uv);
+    vec3 baseColor = texture2D(colortex0, uv).rgb;
     float pbrPresence = clamp(extra.b, 0.0, 1.0) * (1.0 - waterMask);
     float smoothness = clamp(material.g, 0.0, 1.0) * (1.0 - waterMask);
     float reflectance = clamp(extra.r, 0.0, 1.0);
@@ -798,8 +839,10 @@ vec3 decodeStoredPbrNormal(vec2 uv, float depth, float waterMask) {
     float stoneMaterial = getExplicitStoneMaterial(material, extra, waterMask);
     float smoothSurface = smoothstep(0.66, 0.92, smoothness);
     float glassMaterial = getExplicitGlassMaterial(material, extra, waterMask);
+    float foliageMaterial = getFoliageSurfaceMask(baseColor, material, waterMask);
     float detailStrength = PBR_NORMAL_DETAIL_STRENGTH * (1.0 - pbrPresence * smoothSurface * (0.35 + metalLike * 0.25));
     detailStrength *= 1.0 - glassMaterial * 0.72;
+    detailStrength *= 1.0 - foliageMaterial * (0.58 + getNightVisibility() * 0.34);
     detailStrength = mix(detailStrength, detailStrength * 1.16, stoneMaterial);
 
     vec3 stored = normalize(normalData.rgb * 2.0 - 1.0);
@@ -1071,12 +1114,7 @@ vec3 applyScreenSpaceGlobalIllumination(vec3 color, vec2 uv, float depth, float 
 }
 
 float getFoliageSssMask(vec3 baseColor, vec4 material, float waterMask) {
-    float greenLead = smoothstep(0.02, 0.26, baseColor.g - max(baseColor.r * 0.92, baseColor.b));
-    float naturalSaturation = smoothstep(0.10, 0.46, colorSaturation(baseColor));
-    float visible = smoothstep(0.035, 0.42, luminance(baseColor));
-    float notSmooth = 1.0 - smoothstep(0.52, 0.90, material.g);
-    float porosityAssist = 0.62 + clamp(material.a, 0.0, 1.0) * 0.38;
-    return clamp(greenLead * naturalSaturation * visible * notSmooth * porosityAssist * (1.0 - waterMask), 0.0, 1.0);
+    return getFoliageSurfaceMask(baseColor, material, waterMask);
 }
 
 vec3 applyLeafSubsurfaceScattering(vec3 color, vec2 uv, float depth, float waterMask) {
@@ -1113,6 +1151,7 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
 
     vec4 material = texture2D(colortex1, uv);
     vec4 pbrExtra = texture2D(colortex3, uv);
+    vec3 baseColor = texture2D(colortex0, uv).rgb;
     float smoothness = clamp(material.g, 0.0, 1.0) * (1.0 - waterMask);
     float emission = clamp(material.b, 0.0, 1.0) * (1.0 - waterMask);
     float porosity = clamp(material.a, 0.0, 1.0) * (1.0 - waterMask);
@@ -1122,9 +1161,11 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     float upward = clamp(pbrExtra.a, 0.0, 1.0) * (1.0 - waterMask);
     float rain = getRainAmount();
     float overcast = getRainCloudOcclusion();
+    float night = getNightVisibility();
     float glassMaterial = getExplicitGlassMaterial(material, pbrExtra, waterMask);
     float metalMaterial = getExplicitMetalMaterial(material, pbrExtra, waterMask);
     float stoneMaterial = getExplicitStoneMaterial(material, pbrExtra, waterMask);
+    float foliageMaterial = getFoliageSurfaceMask(baseColor, material, waterMask);
 
     if (smoothness <= 0.001 && emission <= 0.001 && rain <= 0.001) {
         return color;
@@ -1161,9 +1202,11 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     drySpec = mix(drySpec, smoothness * GLASS_REFLECTION_STRENGTH * (0.10 + fresnel * 0.72), glassMaterial);
     drySpec = mix(drySpec, drySpec * 0.36, stoneMaterial);
     drySpec = max(drySpec, metalMaterial * METAL_REFLECTION_STRENGTH * (0.18 + fresnel * 0.92) * (0.44 + smoothness * 0.56));
+    drySpec *= 1.0 - foliageMaterial * (0.68 + night * 0.26);
     float wetSpec = rain * upward * MATERIAL_WET_SURFACE_BOOST * (0.24 + fresnel * 1.12) * (0.30 + impermeable * 0.90) * (1.0 + overcast * 0.18);
     wetSpec *= 1.0 - glassMaterial * 0.82;
     wetSpec *= 1.0 - stoneMaterial * 0.28;
+    wetSpec *= 1.0 - foliageMaterial * 0.44;
     float specMask = clamp((drySpec + wetSpec) * (1.0 - waterMask), 0.0, 0.76);
 
     float porousWetDarkening = rain * upward * porosity * PBR_POROSITY_RAIN_DAMPING;
@@ -1172,6 +1215,7 @@ vec3 applyMaterialSurfaceResponse(vec3 color, vec2 uv, float depth, float waterM
     vec3 glossyTarget = max(roughDamped, softReflection * (0.66 + smoothness * 0.34 + rain * upward * 0.22));
     glossyTarget = mix(glossyTarget, max(roughDamped, softReflection * vec3(0.72, 0.78, 0.86)), stoneMaterial * 0.84);
     glossyTarget = mix(glossyTarget, max(roughDamped, softReflection * vec3(0.88, 0.95, 1.05)), metalMaterial * (0.58 + fresnel * 0.22));
+    glossyTarget = mix(glossyTarget, roughDamped, foliageMaterial * (0.62 + night * 0.30));
     glossyTarget = mix(glossyTarget, glossyTarget * vec3(0.78, 0.88, 1.08), rain * upward * (0.18 + overcast * 0.08));
     float glassReflectionMix = clamp(GLASS_REFLECTION_STRENGTH * (0.26 + fresnel * 0.48), 0.0, 0.42);
     vec3 glassReflection = mix(color * vec3(0.98, 1.00, 1.01),
@@ -1260,10 +1304,14 @@ vec3 applyCinematicWaterReflection(vec3 color, vec2 uv, float depth, float water
     vec3 currentScene = texture2D(colortex0, refractUv).rgb;
     float opaqueValid = smoothstep(0.015, 0.120, luminance(opaqueScene));
     vec3 refractedScene = mix(currentScene, opaqueScene, opaqueValid);
+    float waterAmbient = getWaterSceneAmbient(uv, refractedScene);
+    float ambientLift = smoothstep(0.12, 0.74, waterAmbient);
+    float waterNightCap = mix(0.34, 0.985, clamp(waterAmbient + getDayVisibility() * 0.18, 0.0, 1.0));
     vec3 dynamicReflection = getDynamicWaterEnvironmentReflection(worldPos, waterNormal, ripple, curvature, waveBreakup, depthFactor);
     dynamicReflection *= 1.0 + WATER_SKY_REFLECTION_BOOST * (0.08 + depthFactor * 0.12);
     dynamicReflection *= 1.0 - dayDamping * (0.44 + depthFactor * 0.18);
     dynamicReflection *= weatherReflectionFade * (0.74 + edgeReflectFade * 0.26);
+    dynamicReflection *= mix(0.68, 1.08, ambientLift);
     dynamicReflection = mix(dynamicReflection, dynamicReflection * vec3(0.60, 0.78, 1.10), night * 0.18 + rain * 0.14);
     dynamicReflection += sunTint * brightWave * shadowedSparkle * (0.064 + depthFactor * 0.052) * (1.0 - dayDamping * 0.66) * directSun;
     dynamicReflection += sunTint * sunPath * (0.060 + depthFactor * 0.050);
@@ -1276,6 +1324,7 @@ vec3 applyCinematicWaterReflection(vec3 color, vec2 uv, float depth, float water
     reflectionMask = max(reflectionMask, waterPresence * WATER_REFLECTION_STRENGTH * (WATER_REFLECTION_FLOOR * 0.55 + depthFactor * 0.08));
     reflectionMask *= 0.78 + shallowFactor * 0.16 + depthFactor * 0.10;
     reflectionMask *= shallowReflectionFade * (0.72 + edgeReflectFade * 0.28) * weatherReflectionFade * (0.92 + night * 0.08);
+    reflectionMask *= mix(0.78, 1.10, ambientLift);
     reflectionMask *= 1.0 - WATER_AMBIENT_REFLECTION_DAMPING * 0.28;
 
     vec3 shallowTint = mix(refractedScene, waterDepthColor, 0.16 + WATER_SHORE_CLARITY * 0.10);
@@ -1286,6 +1335,11 @@ vec3 applyCinematicWaterReflection(vec3 color, vec2 uv, float depth, float water
     baseWater = mix(baseWater, baseWater * vec3(0.68, 0.86, 1.04), (rippleEnergy * 0.10 + depthFactor * 0.12));
     baseWater *= 1.0 - depthFactor * WATER_DEPTH_ABSORPTION * 0.18;
     baseWater = mix(baseWater, baseWater * vec3(0.82, 0.90, 1.02), clamp(waterShadowAmount * 0.26, 0.0, 0.32));
+    vec3 ambientWaterFloor = mix(vec3(0.050, 0.160, 0.300), vec3(0.220, 0.480, 0.660), ambientLift);
+    ambientWaterFloor = mix(ambientWaterFloor, vec3(0.400, 0.700, 0.860), shallowFactor * ambientLift * 0.32);
+    float ambientFloor = WATER_NOON_VISIBILITY_FLOOR * waterPresence * ambientLift * (0.22 + depthLift * 0.30 + shallowFactor * 0.14) * (1.0 - rain * 0.36);
+    baseWater = max(baseWater, ambientWaterFloor * ambientFloor);
+    baseWater *= 0.86 + ambientLift * 0.18;
     vec3 noonVisibility = mix(vec3(0.22, 0.45, 0.62), vec3(0.09, 0.28, 0.48), smoothstep(0.18, 0.96, depthFactor));
     float noonFloor = noon * waterPresence * WATER_NOON_VISIBILITY_FLOOR * (0.42 + depthLift * 0.46) * (1.0 - rain * 0.48);
     baseWater = max(baseWater, noonVisibility * noonFloor);
@@ -1308,6 +1362,8 @@ vec3 applyCinematicWaterReflection(vec3 color, vec2 uv, float depth, float water
     reflectedWater += dynamicReflection * WATER_REFLECTION_CONTRAST * (0.010 + depthFactor * 0.012) * (1.0 - dayDamping * 0.70);
     reflectedWater = max(reflectedWater, noonVisibility * noonFloor * (0.92 + shallowFactor * 0.18));
     reflectedWater = applyWaterDayHighlightRolloff(reflectedWater, noon * waterPresence);
+    float reflectedLum = max(luminance(reflectedWater), 0.0001);
+    reflectedWater *= mix(min(1.0, waterNightCap / reflectedLum), 1.0, getDayVisibility() * 0.55);
     return clamp(reflectedWater * WATER_SURFACE_BRIGHTNESS, 0.0, 0.985);
 }
 
