@@ -21,5 +21,5 @@ value.DEBUG_VIEW.6=Smooth/Rough/Glass
 value.DEBUG_VIEW.7=Reflect/Height/PBR
 value.DEBUG_VIEW.8=Light/Emit/Porosity
 value.DEBUG_VIEW.9=Normal/AO
-value.DEBUG_VIEW.10=Glass/Up/Water
+value.DEBUG_VIEW.10=Glass/Metal/Stone/Water
 value.DEBUG_VIEW.11=Bump Detail

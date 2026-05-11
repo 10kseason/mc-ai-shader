@@ -138,6 +138,8 @@ vec4 traceReflectedGeometry(vec2 uv, float depth) {
     float anchoredRipple = getWorldAnchoredRippleMask(waterWorldPos.xz);
     float waterDepthFade = smoothstep(0.05, 0.42, depthFactor);
     waterDepthFade *= 1.0 - smoothstep(0.93, 1.0, depthFactor) * 0.14;
+    float sourceEdgeFade = screenEdgeFade(uv);
+    float shallowGeometryFade = mix(0.62, 1.0, smoothstep(0.16, 0.72, depthFactor));
 
     for (int i = 0; i < 30; i++) {
         if (i >= WATER_GEOMETRY_REFLECTION_STEPS) {
@@ -183,8 +185,9 @@ vec4 traceReflectedGeometry(vec2 uv, float depth) {
             float depthFit = 1.0 - smoothstep(0.0, thickness, depthDelta);
             float glancing = pow(1.0 - clamp(dot(-viewDir, waterNormal), 0.0, 1.0), 1.65);
             float rainFade = 1.0 - getRainAmount() * 0.18;
-            float alpha = edgeFade * travelFade * depthFit * aboveWater * notSky * distanceFade;
+            float alpha = sourceEdgeFade * edgeFade * travelFade * depthFit * aboveWater * notSky * distanceFade;
             alpha *= (0.30 + glancing * 0.84) * waterDepthFade * rainFade * WATER_GEOMETRY_REFLECTION_STRENGTH;
+            alpha *= shallowGeometryFade;
             alpha *= mix(0.86, 1.06, anchoredRipple);
 
             vec2 hitUv = clamp(rayScreen.xy, vec2(0.001), vec2(0.999));

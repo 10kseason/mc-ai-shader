@@ -2,7 +2,7 @@
 
 /* DRAWBUFFERS:6 */
 /*
-const int colortex6Format = RGBA16;
+const int colortex6Format = RGBA16F;
 */
 
 uniform sampler2D colortex5;
@@ -31,5 +31,5 @@ void main() {
     bloom += sampleBloom(texcoord + vec2( px.x, -px.y)) * 0.07;
     bloom += sampleBloom(texcoord + vec2(-px.x, -px.y)) * 0.07;
 
-    gl_FragData[0] = vec4(clamp(bloom, 0.0, 1.0), 1.0);
+    gl_FragData[0] = vec4(clamp(bloom, 0.0, 4.0), 1.0);
 }
