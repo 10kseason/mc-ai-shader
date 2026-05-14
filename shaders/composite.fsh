@@ -114,8 +114,11 @@ varying vec2 texcoord;
 #define RT_LOCAL_SCREEN_RADIUS 112.0 // [48.0 72.0 96.0 112.0 144.0 192.0]
 #define RT_LOCAL_MAX_DISTANCE 24.0 // [8.0 12.0 18.0 24.0 32.0 48.0]
 #define RT_LOCAL_TRACE_STEPS 8 // [4 6 8 10 12]
+#define RT_LOCAL_SAMPLE_QUALITY 2 // [1 2 3]
 #define RT_LOCAL_SOURCE_THRESHOLD 0.66 // [0.44 0.54 0.66 0.78 0.88]
 #define RT_LOCAL_WARMTH 0.82 // [0.00 0.35 0.58 0.82 1.00]
+#define RT_LOCAL_NEON_STRENGTH 0.58 // [0.00 0.20 0.38 0.58 0.78 1.00]
+#define RT_LOCAL_NEON_SPILL 0.34 // [0.00 0.16 0.26 0.34 0.48 0.64]
 #define RT_BLOCKLIGHT_FIELD_STRENGTH 0.22 // [0.00 0.10 0.16 0.22 0.32 0.46]
 #define RT_BLOCKLIGHT_FIELD_SHADOW 0.04 // [0.00 0.04 0.08 0.12 0.18 0.26]
 #define RT_BLOCKLIGHT_FIELD_RADIUS 5.0 // [2.0 3.5 5.0 7.0 10.0]
@@ -933,6 +936,32 @@ float getRtWarmSourceMask(vec3 sourceColor) {
     return clamp(max(warmLead, flameYellow) * visible, 0.0, 1.0);
 }
 
+float getRtNeonSourceMask(vec3 sourceColor) {
+    float brightness = luminance(sourceColor);
+    float saturation = colorSaturation(sourceColor);
+    float cyan = smoothstep(0.04, 0.28, sourceColor.g - sourceColor.r * 0.74) *
+                 smoothstep(0.04, 0.28, sourceColor.b - sourceColor.r * 0.74);
+    float blue = smoothstep(0.05, 0.30, sourceColor.b - max(sourceColor.r, sourceColor.g) * 0.82);
+    float magenta = smoothstep(0.04, 0.28, sourceColor.r - sourceColor.g * 0.76) *
+                    smoothstep(0.04, 0.28, sourceColor.b - sourceColor.g * 0.76);
+    float neonHue = max(max(cyan, blue), magenta);
+    float visible = smoothstep(0.09, 0.76, brightness) * smoothstep(0.12, 0.48, saturation);
+    return clamp(neonHue * visible, 0.0, 1.0);
+}
+
+vec3 getRtCyberTint(vec3 sourceColor, float warmSource, float neonSource) {
+    vec3 warmTint = normalizeLightTint(mix(sourceColor, vec3(1.00, 0.58, 0.22), RT_LOCAL_WARMTH));
+    vec3 neonBase = sourceColor;
+    float cyanBias = smoothstep(0.04, 0.28, min(sourceColor.g, sourceColor.b) - sourceColor.r * 0.72);
+    float magentaBias = smoothstep(0.04, 0.28, min(sourceColor.r, sourceColor.b) - sourceColor.g * 0.72);
+    neonBase = mix(neonBase, sourceColor * vec3(0.74, 1.10, 1.28), cyanBias * 0.44);
+    neonBase = mix(neonBase, sourceColor * vec3(1.22, 0.62, 1.18), magentaBias * 0.36);
+    vec3 neonTint = normalizeLightTint(max(neonBase, vec3(luminance(sourceColor)) * vec3(0.36, 0.70, 1.12)));
+    float neonBlend = clamp(neonSource * RT_LOCAL_NEON_STRENGTH * (0.42 + colorSaturation(sourceColor) * 0.58), 0.0, 1.0);
+    neonBlend *= 1.0 - warmSource * 0.38;
+    return normalizeLightTint(mix(warmTint, neonTint, neonBlend));
+}
+
 float getEncodedBlockLight(vec2 uv) {
     vec4 material = texture2D(colortex1, clamp(uv, vec2(0.001), vec2(0.999)));
     float notWater = 1.0 - step(0.5, material.r);
@@ -986,7 +1015,11 @@ vec4 sampleRtLocalLight(vec2 uv, vec3 center, vec3 normal, vec2 offset, float we
     vec3 sourceColor = texture2D(colortex0, sourceUv).rgb;
     float emission = clamp(sourceMaterial.b, 0.0, 1.0);
     float warmSource = getRtWarmSourceMask(sourceColor);
-    float sourceEnergy = smoothstep(RT_LOCAL_SOURCE_THRESHOLD, 1.0, emission) * warmSource * weight;
+    float neonSource = getRtNeonSourceMask(sourceColor);
+    float sourceMask = max(warmSource, neonSource * RT_LOCAL_NEON_STRENGTH);
+    float neonThreshold = max(0.36, RT_LOCAL_SOURCE_THRESHOLD - 0.14 * RT_LOCAL_NEON_STRENGTH);
+    float threshold = mix(RT_LOCAL_SOURCE_THRESHOLD, neonThreshold, clamp(neonSource * RT_LOCAL_NEON_STRENGTH, 0.0, 1.0));
+    float sourceEnergy = smoothstep(threshold, 1.0, emission) * sourceMask * weight;
     if (sourceEnergy <= 0.0001) {
         return vec4(0.0);
     }
@@ -1005,11 +1038,12 @@ vec4 sampleRtLocalLight(vec2 uv, vec3 center, vec3 normal, vec2 offset, float we
     range *= screenEdgeFade(sourceUv);
 
     float visibility = traceRtLocalVisibility(center, normal, lightPos);
-    vec3 torchTint = normalizeLightTint(mix(sourceColor, vec3(1.00, 0.58, 0.22), RT_LOCAL_WARMTH));
+    vec3 torchTint = getRtCyberTint(sourceColor, warmSource, neonSource);
     float energy = sourceEnergy * facing * range;
-    vec3 light = torchTint * energy * visibility * RT_LOCAL_LIGHT_STRENGTH;
+    float neonBoost = 1.0 + neonSource * RT_LOCAL_NEON_STRENGTH * RT_LOCAL_NEON_SPILL;
+    vec3 light = torchTint * energy * visibility * RT_LOCAL_LIGHT_STRENGTH * neonBoost;
     float shadowSource = smoothstep(0.26, 0.78, sourceEnergy);
-    float blockedShadow = energy * shadowSource * (1.0 - visibility);
+    float blockedShadow = energy * shadowSource * (1.0 - visibility) * (1.0 - neonSource * 0.24);
 
     return vec4(light, blockedShadow);
 }
@@ -1028,14 +1062,18 @@ vec4 getRtLocalLighting(vec2 uv, float depth, float waterMask) {
     light += sampleRtLocalLight(uv, center, normal, vec2(-1.000,  0.000) * px * 0.42, 1.00);
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.000,  1.000) * px * 0.42, 0.94);
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.000, -1.000) * px * 0.42, 0.94);
+#if RT_LOCAL_SAMPLE_QUALITY >= 2
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.707,  0.707) * px * 0.62, 0.82);
     light += sampleRtLocalLight(uv, center, normal, vec2(-0.707,  0.707) * px * 0.62, 0.82);
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.707, -0.707) * px * 0.62, 0.82);
     light += sampleRtLocalLight(uv, center, normal, vec2(-0.707, -0.707) * px * 0.62, 0.82);
+#endif
+#if RT_LOCAL_SAMPLE_QUALITY >= 3
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.940,  0.342) * px, 0.56);
     light += sampleRtLocalLight(uv, center, normal, vec2(-0.342,  0.940) * px, 0.56);
     light += sampleRtLocalLight(uv, center, normal, vec2(-0.940, -0.342) * px, 0.56);
     light += sampleRtLocalLight(uv, center, normal, vec2( 0.342, -0.940) * px, 0.56);
+#endif
 
     return light;
 }
@@ -1405,6 +1443,13 @@ vec3 applyRainReflection(vec3 color, vec2 uv, float depth, float waterMask) {
     vec3 wetColor = mix(color, coolWet, mask * 0.42);
     wetColor = mix(wetColor, max(wetColor, ssrReflection.rgb), clamp(mask * ssrReflection.a, 0.0, 0.82));
     wetColor += ssrReflection.rgb * ssrReflection.a * mask * 0.12;
+
+    vec4 localLight = getRtLocalLighting(uv, depth, waterMask);
+    float neonEnergy = clamp(max(max(localLight.r, localLight.g), localLight.b) - luminance(localLight.rgb) * 0.74, 0.0, 1.0);
+    vec3 neonTint = normalizeLightTint(max(localLight.rgb, vec3(0.001)));
+    float wetNeon = mask * neonEnergy * RT_LOCAL_NEON_SPILL * (0.34 + fresnel * 0.78) * (0.62 + upward * 0.38);
+    wetColor = mix(wetColor, max(wetColor, neonTint * (0.10 + luminance(wetColor) * 0.92)), clamp(wetNeon, 0.0, 0.46));
+    wetColor += neonTint * wetNeon * 0.050;
 
     return wetColor;
 }

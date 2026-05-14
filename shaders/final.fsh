@@ -58,6 +58,7 @@ varying vec2 texcoord;
 #define CYBER_GLASS_TINT 0.12 // [0.00 0.06 0.12 0.20 0.32 0.48]
 #define FRESNEL_POWER 2.60 // [1.40 1.90 2.60 3.40 4.60]
 #define NEON_COLOR_BIAS 0.72 // [0.00 0.25 0.48 0.72 0.95 1.20]
+#define CYBER_NEON_SURFACE_GAIN 0.42 // [0.00 0.18 0.30 0.42 0.58 0.78]
 #define SUMMER_TONE_STRENGTH 0.12 // [0.00 0.12 0.22 0.30 0.42 0.56]
 #define SUMMER_BLUE_TINT 0.08 // [0.00 0.08 0.14 0.18 0.26 0.36]
 #define SUMMER_GREEN_LIFT 0.18 // [0.00 0.10 0.18 0.24 0.34 0.46]
@@ -295,7 +296,7 @@ float getSaturationAwareBloomMask(vec3 color) {
     float highlight = smoothstep(0.58, 1.00, intensity);
 
     float thresholdDrop = clamp(colorEnergy * saturationBloomStrength * 0.26 +
-                               neon * neonColorBias * 0.32 +
+                               neon * neonColorBias * (0.32 + CYBER_NEON_SURFACE_GAIN * 0.08) +
                                highlight * ambientGlowStrength * 0.16, 0.0, 0.46);
     float threshold = max(0.10, BLOOM_THRESHOLD - thresholdDrop);
     float bloomSignal = max(brightness, intensity * mix(0.50, 0.82, saturation));
@@ -306,7 +307,9 @@ float getSaturationAwareBloomMask(vec3 color) {
 
 vec3 extractBloom(vec3 color) {
     float mask = getSaturationAwareBloomMask(color);
-    vec3 neonTint = mix(color, saturateColor(color, 1.25 + neonColorBias * 0.24), getNeonColorMask(color) * 0.45);
+    vec3 neonTint = mix(color,
+                        saturateColor(color, 1.25 + neonColorBias * 0.24 + CYBER_NEON_SURFACE_GAIN * 0.12),
+                        getNeonColorMask(color) * (0.45 + CYBER_NEON_SURFACE_GAIN * 0.14));
     return neonTint * mask;
 }
 
@@ -784,7 +787,7 @@ vec3 applyCyberpunkGlassReflection(vec3 color, vec2 uv, float depth, float water
     float streakAxis = abs(dot(normalize((uv - vec2(0.5)) + vec2(0.001)), sideDir));
     float neonStreak = smoothstep(0.82, 1.0, streakAxis) * smoothstep(0.42, 1.05, intensity + emission);
     neonStreak *= 1.0 - glassMaterial * 0.85;
-    neonReflection += vec3(0.32, 0.74, 1.18) * neonStreak * splitStrength * (0.10 + fresnel * 0.22);
+    neonReflection += vec3(0.32, 0.74, 1.18) * neonStreak * splitStrength * (0.10 + fresnel * 0.22) * (1.0 + CYBER_NEON_SURFACE_GAIN * 0.42);
 
     float edgeFade = smoothstep(0.00, 0.08, min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)));
     float mask = clamp(reflectiveMask * edgeFade * (0.26 + fresnel * 1.38 + metalMask * 0.36), 0.0, mix(0.84, 0.62, glassMaterial));
@@ -841,8 +844,13 @@ vec3 applyMaterialFinish(vec3 color, vec2 uv, float depth, float waterMask, vec3
     sheen *= 1.0 - stoneMaterial * rain * 0.20;
     polished = mix(polished, max(polished, sheenTint), clamp(sheen, 0.0, 0.62));
 
+    float neonMask = getNeonColorMask(color);
     vec3 warmEmission = max(color, vec3(brightness) * vec3(1.22, 0.92, 0.58));
-    polished += warmEmission * emission * MATERIAL_EMISSIVE_GLOW * (0.24 + smoothstep(0.08, 0.72, brightness) * 0.58);
+    vec3 neonEmission = saturateColor(max(color, bloomColor * (0.72 + neonColorBias * 0.16)), 1.04 + neonColorBias * 0.24);
+    neonEmission = max(neonEmission, vec3(brightness) * vec3(0.44, 0.78, 1.18));
+    vec3 emissionTint = mix(warmEmission, neonEmission, neonMask * CYBER_NEON_SURFACE_GAIN);
+    polished += emissionTint * emission * MATERIAL_EMISSIVE_GLOW * (0.24 + smoothstep(0.08, 0.72, brightness) * 0.58);
+    polished += neonEmission * neonMask * CYBER_NEON_SURFACE_GAIN * smoothness * 0.018;
 
     return mix(color, polished, clamp(smoothness + emission + rain * upward * (1.0 - porosity * 0.42) * 0.32, 0.0, 1.0));
 }

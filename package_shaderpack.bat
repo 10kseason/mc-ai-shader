@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "DIST=%ROOT%dist"
-set "VERSION=0.1.17"
+set "VERSION=0.1.18"
 set "OUT=%DIST%\Client-GLSL-Shaderpack-Lab-%VERSION%-mc1.20.1.zip"
 set "ALIAS=%DIST%\Client-GLSL-Shaderpack-Lab-1.20.1.zip"
 
