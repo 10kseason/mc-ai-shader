@@ -10,7 +10,7 @@ This project is intentionally separate from the server-side Fabric optimizer cod
 
 ## Version
 
-Current release: `0.1.17` for Minecraft Java `1.20.1`.
+Current release: `0.1.18` for Minecraft Java `1.20.1`.
 
 ## Preview
 
@@ -74,8 +74,9 @@ In-game Iris test captures from the current shaderpack build:
 - Bloom defaults use a higher threshold, restrained pixel radius, soft knee, rain/night damping, and dim-surface guarding so rainy, nighttime, and indoor scenes do not smear every bright surface.
 - Bloom extraction now follows a more physical viewing model: local eye adaptation, source-to-surround contrast, emission, muted sky glare, and broad bright-surface suppression decide what scatters instead of treating saturated color as light.
 - Final bloom compositing now behaves more like lens/atmospheric veiling glare, with exposure-aware damping before adding colored scatter back into the image.
-- Adds first-pass screen-space RT local lighting for torch-like emissive sources: visible warm emissive pixels cast local colored light, trace through the depth buffer, and reduce light where intervening geometry blocks the ray.
-- RT local light settings are exposed as `RT_LOCAL_LIGHT_STRENGTH`, `RT_LOCAL_SHADOW_STRENGTH`, `RT_LOCAL_SCREEN_RADIUS`, `RT_LOCAL_MAX_DISTANCE`, `RT_LOCAL_TRACE_STEPS`, `RT_LOCAL_SOURCE_THRESHOLD`, and `RT_LOCAL_WARMTH`.
+- Adds first-pass screen-space RT local lighting for torch-like and cyber-neon emissive sources: visible warm, cyan, blue, and magenta emissive pixels cast local colored light, trace through the depth buffer, and reduce light where intervening geometry blocks the ray.
+- RT local light settings are exposed as `RT_LOCAL_LIGHT_STRENGTH`, `RT_LOCAL_SHADOW_STRENGTH`, `RT_LOCAL_SCREEN_RADIUS`, `RT_LOCAL_MAX_DISTANCE`, `RT_LOCAL_TRACE_STEPS`, `RT_LOCAL_SAMPLE_QUALITY`, `RT_LOCAL_SOURCE_THRESHOLD`, `RT_LOCAL_WARMTH`, `RT_LOCAL_NEON_STRENGTH`, and `RT_LOCAL_NEON_SPILL`.
+- Final cyber material response adds `CYBER_NEON_SURFACE_GAIN`, which boosts neon bloom extraction and emissive surface finish without increasing RT trace cost.
 - RT local lights get a small weather contrast response through `RT_WEATHER_LOCAL_CONTRAST`, so torch-like sources stand out more when rain clouds cut daylight.
 - RT source detection now uses a stricter warm-texture source mask so ordinary torch-lit walls are less likely to become fake emitters.
 - Adds a block-light field fallback in the material mask: non-water surfaces encode local block light below the water-mask threshold, then composite uses it for stable warm local light and shadow-edge darkening even when the torch itself is off screen.
@@ -89,7 +90,7 @@ In-game Iris test captures from the current shaderpack build:
 ## Install
 
 1. Run `package_shaderpack.bat`.
-2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.17-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
+2. Copy `dist/Client-GLSL-Shaderpack-Lab-0.1.18-mc1.20.1.zip` into `.minecraft/shaderpacks/`.
 3. Enable it from Iris or OptiFine shader settings.
 
 The packaging script also refreshes `dist/Client-GLSL-Shaderpack-Lab-1.20.1.zip` as a stable comparison alias.
@@ -100,9 +101,9 @@ During development, you can also copy this folder directly into `shaderpacks/` a
 
 Open Iris shader settings and use the profile button at the top of the main options screen.
 
-- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, bump relief, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass.
-- `balanced`: uses the source defaults and the generated PBR map tuning baseline. Use this when comparing vanilla glass, metal blocks, ice, stone, brick, tile, polished material response, the stabilized water reflected-geometry pass, screen GI, leaf SSS, wet-weather scatter, and bump-map relief.
-- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO and screen GI, longer RT local light tracing, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, stronger leaf SSS, stronger bump relief, stronger world-anchored water perturbation, and stronger but still height-damped material reflections.
+- `low`: reduces expensive comparison targets first. It drops shadow map resolution/distance, SSAO radius and strength, RT local light tracing distance/steps/tap quality, neon spill, bloom radius/GI, water SSR steps/distance, rain SSR, fog/cloud intensity, bump relief, and reflective glass/metal response. It also disables the `composite6` reflected-geometry water pass.
+- `balanced`: uses the source defaults and the generated PBR map tuning baseline. Use this when comparing vanilla glass, metal blocks, ice, stone, brick, tile, polished material response, neon RT local light, the stabilized water reflected-geometry pass, screen GI, leaf SSS, wet-weather scatter, and bump-map relief.
+- `cinematic`: raises the same groups for visual stress testing. It uses 4096 shadows at 160 blocks, stronger SSAO and screen GI, wider neon RT local light sampling, larger bloom/GI, longer water SSR and reflected-geometry tracing, stronger fog/cloud/rain atmosphere, stronger leaf SSS, stronger bump relief, stronger world-anchored water perturbation, and stronger but still height-damped material reflections.
 
 Suggested test loop:
 
@@ -112,6 +113,12 @@ Suggested test loop:
 4. If you touch an individual slider after selecting a profile, Iris may show `Custom`; reselect the profile to return to the preset.
 
 ## Changelog
+
+### 0.1.18
+
+- Added cyber-neon RT local lighting: cyan, blue, and magenta emissive pixels can now cast screen-space local color in addition to the existing warm torch path.
+- Added `RT_LOCAL_SAMPLE_QUALITY`, `RT_LOCAL_NEON_STRENGTH`, `RT_LOCAL_NEON_SPILL`, and `CYBER_NEON_SURFACE_GAIN` controls, with `low`, `balanced`, and `cinematic` profile values tuned for cost versus style.
+- Wet rain reflections and final emissive material finish now catch local neon color more clearly without adding a new render target.
 
 ### 0.1.17
 
